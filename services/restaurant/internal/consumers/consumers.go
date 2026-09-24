@@ -6,8 +6,8 @@ package consumers
 
 import (
 	"context"
+	"errors"
 	"log/slog"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -54,11 +54,20 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 func (h *Handlers) handleOrderCreated(ctx context.Context, env events.Envelope, data events.OrderCreatedData) error {
 	return h.Pool.WithTx(ctx, func(tx pgx.Tx) error {
 		isNew, err := db.InsertIfNew(ctx, tx, env.EventID, env.EventType)
-		if err != nil {
+		if err != nil || !isNew {
 			return err
 		}
-		if !isNew {
-			return nil
+
+		// An unknown restaurant gets an explicit rejection. It used to fail
+		// the lookup, retry, dead-letter, and leave the order CREATED
+		// forever. No kitchen row is cached for it (restaurant_id is a
+		// foreign key), and the cancel handler tolerates that.
+		rest, err := store.GetRestaurantTx(ctx, tx, data.RestaurantID)
+		if errors.Is(err, store.ErrNotFound) {
+			return publishDecision(ctx, tx, events.RestaurantRejected, data.OrderID, data.RestaurantID, "restaurant not found")
+		}
+		if err != nil {
+			return err
 		}
 
 		if err := store.InsertRestaurantOrder(ctx, tx, &store.RestaurantOrder{
@@ -68,38 +77,18 @@ func (h *Handlers) handleOrderCreated(ctx context.Context, env events.Envelope, 
 			return err
 		}
 
-		rest, err := loadRestaurant(ctx, tx, data.RestaurantID)
+		reason, err := h.decide(ctx, tx, rest, env, data)
 		if err != nil {
 			return err
 		}
-
-		var requested []domain.RequestedItem
-		var ids []string
-		for _, it := range data.Items {
-			requested = append(requested, domain.RequestedItem{MenuItemID: it.MenuItemID, Quantity: it.Quantity})
-			ids = append(ids, it.MenuItemID)
-		}
-
-		reason := ""
-		ok := rest.OpenAt(minutesSinceMidnight(env.Timestamp))
-		if !ok {
-			reason = rest.Name + " is currently closed"
-		} else {
-			catalogue, err := store.CatalogueFor(ctx, tx, ids)
-			if err != nil {
-				return err
-			}
-			ok, reason = domain.CheckStock(catalogue, requested)
-		}
-
-		if !ok {
+		if reason != "" {
 			if err := store.UpdateRestaurantOrderStatus(ctx, tx, data.OrderID, store.StatusRejected, reason); err != nil {
 				return err
 			}
 			return publishDecision(ctx, tx, events.RestaurantRejected, data.OrderID, data.RestaurantID, reason)
 		}
 
-		if err := store.DecrementStock(ctx, tx, requested); err != nil {
+		if err := store.DecrementStock(ctx, tx, requestedFrom(data.Items)); err != nil {
 			return err
 		}
 		if err := store.UpdateRestaurantOrderStatus(ctx, tx, data.OrderID, store.StatusAccepted, ""); err != nil {
@@ -107,6 +96,43 @@ func (h *Handlers) handleOrderCreated(ctx context.Context, env events.Envelope, 
 		}
 		return publishDecision(ctx, tx, events.RestaurantAccepted, data.OrderID, data.RestaurantID, "")
 	})
+}
+
+// decide returns a rejection reason, or "" to accept. Hours are judged in
+// the restaurant's own timezone at the moment the order was placed.
+func (h *Handlers) decide(ctx context.Context, tx pgx.Tx, rest *domain.Restaurant, env events.Envelope, data events.OrderCreatedData) (string, error) {
+	open, err := rest.OpenAtTime(env.Timestamp)
+	if err != nil {
+		// Bad data on our side, not the customer's: reject rather than
+		// retry forever, and log it loudly so someone fixes the row.
+		h.Log.Error("restaurant timezone misconfigured", "restaurantId", rest.ID, "error", err)
+		return rest.Name + " can't take orders right now", nil
+	}
+	if !open {
+		return rest.Name + " is currently closed", nil
+	}
+
+	requested := requestedFrom(data.Items)
+	ids := make([]string, 0, len(requested))
+	for _, r := range requested {
+		ids = append(ids, r.MenuItemID)
+	}
+	catalogue, err := store.CatalogueFor(ctx, tx, ids)
+	if err != nil {
+		return "", err
+	}
+	if ok, reason := domain.CheckItems(rest.ID, catalogue, requested); !ok {
+		return reason, nil
+	}
+	return "", nil
+}
+
+func requestedFrom(items []events.OrderItem) []domain.RequestedItem {
+	out := make([]domain.RequestedItem, 0, len(items))
+	for _, it := range items {
+		out = append(out, domain.RequestedItem{MenuItemID: it.MenuItemID, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents})
+	}
+	return out
 }
 
 func (h *Handlers) handleOrderCancelled(ctx context.Context, env events.Envelope, data events.OrderCancelledData) error {
@@ -119,17 +145,16 @@ func (h *Handlers) handleOrderCancelled(ctx context.Context, env events.Envelope
 			return nil
 		}
 		ro, err := store.GetRestaurantOrderForUpdate(ctx, tx, data.OrderID)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil // rejected as "restaurant not found": nothing was cached or reserved
+		}
 		if err != nil {
 			return err
 		}
 		// Only release stock if it was actually reserved (accepted and
 		// beyond); a rejected order never touched stock.
 		if ro.Status == store.StatusAccepted || ro.Status == store.StatusPreparing || ro.Status == store.StatusReady {
-			var requested []domain.RequestedItem
-			for _, it := range ro.Items {
-				requested = append(requested, domain.RequestedItem{MenuItemID: it.MenuItemID, Quantity: it.Quantity})
-			}
-			if err := store.RestoreStock(ctx, tx, requested); err != nil {
+			if err := store.RestoreStock(ctx, tx, requestedFrom(ro.Items)); err != nil {
 				return err
 			}
 		}
@@ -168,22 +193,4 @@ func publishDecision(ctx context.Context, tx pgx.Tx, topic, orderID, restaurantI
 		return err
 	}
 	return outbox.Insert(ctx, tx, env)
-}
-
-func minutesSinceMidnight(t time.Time) time.Duration {
-	return time.Duration(t.Hour())*time.Hour + time.Duration(t.Minute())*time.Minute
-}
-
-func loadRestaurant(ctx context.Context, tx pgx.Tx, id string) (*domain.Restaurant, error) {
-	row := tx.QueryRow(ctx,
-		`SELECT id, name, lat, lng, extract(epoch from opens_at)/60, extract(epoch from closes_at)/60, is_open FROM restaurants WHERE id=$1`,
-		id)
-	r := &domain.Restaurant{}
-	var opensMin, closesMin float64
-	if err := row.Scan(&r.ID, &r.Name, &r.Lat, &r.Lng, &opensMin, &closesMin, &r.IsOpen); err != nil {
-		return nil, err
-	}
-	r.OpensAt = time.Duration(opensMin) * time.Minute
-	r.ClosesAt = time.Duration(closesMin) * time.Minute
-	return r, nil
 }

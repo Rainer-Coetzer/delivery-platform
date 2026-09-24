@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/rainercoetzer/delivery-platform/pkg/auth"
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
 	"github.com/rainercoetzer/delivery-platform/services/restaurant/internal/domain"
@@ -22,18 +23,40 @@ type API struct {
 	Pool  *db.Pool
 	Store *store.Store
 	Log   *slog.Logger
+	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
+	Auth func(http.Handler) http.Handler
 }
 
+// Routes: browsing is open to any signed-in user; creating restaurants is
+// admin-only; menus and kitchen actions belong to the restaurant itself
+// (its account's refId) or an admin.
 func (a *API) Routes(r chi.Router) {
 	r.Get("/healthz", httpx.Health)
 	r.Route("/restaurants", func(r chi.Router) {
-		r.Post("/", a.createRestaurant)
+		r.Use(a.Auth)
 		r.Get("/", a.listRestaurants)
-		r.Get("/{id}", a.getRestaurant)
-		r.Post("/{id}/menu-items", a.createMenuItem)
-		r.Get("/{id}/menu-items", a.listMenuItems)
-		r.Patch("/{id}/menu-items/{itemId}", a.updateMenuItem)
-		r.Post("/{id}/orders/{orderId}/ready", a.markReady)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/", a.createRestaurant)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", a.getRestaurant)
+			r.Get("/menu-items", a.listMenuItems)
+			r.Group(func(r chi.Router) {
+				r.Use(ownRestaurant)
+				r.Post("/menu-items", a.createMenuItem)
+				r.Patch("/menu-items/{itemId}", a.updateMenuItem)
+				r.Post("/orders/{orderId}/ready", a.markReady)
+			})
+		})
+	})
+}
+
+// ownRestaurant allows the restaurant account linked to {id}, or an admin.
+func ownRestaurant(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !auth.MustFromContext(r.Context()).ActsAs(auth.RoleRestaurant, chi.URLParam(r, "id")) {
+			httpx.Forbidden(w, "only this restaurant's account (or an admin) can do this")
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -41,8 +64,9 @@ type restaurantRequest struct {
 	Name     string  `json:"name"`
 	Lat      float64 `json:"lat"`
 	Lng      float64 `json:"lng"`
-	OpensAt  string  `json:"opensAt"`  // "HH:MM"
-	ClosesAt string  `json:"closesAt"` // "HH:MM"
+	OpensAt  string  `json:"opensAt"`  // "HH:MM", wall clock in Timezone
+	ClosesAt string  `json:"closesAt"` // "HH:MM"; equal to opensAt means open all day
+	Timezone string  `json:"timezone"` // IANA, e.g. "Africa/Windhoek"
 }
 
 func (a *API) createRestaurant(w http.ResponseWriter, r *http.Request) {
@@ -57,9 +81,15 @@ func (a *API) createRestaurant(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, "name, opensAt and closesAt (HH:MM) are required")
 		return
 	}
+	// Required, not defaulted: guessing a zone is how hours ended up being
+	// judged in UTC (audit P0-9).
+	if _, err := time.LoadLocation(req.Timezone); req.Timezone == "" || err != nil {
+		httpx.BadRequest(w, "timezone must be an IANA zone such as Africa/Windhoek")
+		return
+	}
 	rest := &domain.Restaurant{
 		ID: uuid.NewString(), Name: req.Name, Lat: req.Lat, Lng: req.Lng,
-		OpensAt: sinceMidnight(opens), ClosesAt: sinceMidnight(closes), IsOpen: true,
+		OpensAt: sinceMidnight(opens), ClosesAt: sinceMidnight(closes), Timezone: req.Timezone, IsOpen: true,
 	}
 	if err := a.Store.CreateRestaurant(r.Context(), rest); err != nil {
 		a.Log.Error("create restaurant", "error", err)
@@ -165,7 +195,7 @@ func (a *API) updateMenuItem(w http.ResponseWriter, r *http.Request) {
 // Order service uses to move to READY and the Delivery service uses to
 // assign a driver.
 func (a *API) markReady(w http.ResponseWriter, r *http.Request) {
-	err := kitchen.MarkReady(r.Context(), a.Pool, chi.URLParam(r, "orderId"))
+	err := kitchen.MarkReady(r.Context(), a.Pool, chi.URLParam(r, "id"), chi.URLParam(r, "orderId"))
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		httpx.NotFound(w, "order not found")

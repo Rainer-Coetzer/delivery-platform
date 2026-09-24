@@ -57,26 +57,69 @@ func TestOpenAt(t *testing.T) {
 	}
 }
 
-func TestCheckStock(t *testing.T) {
+func TestOpenAtTime_UsesRestaurantTimezone(t *testing.T) {
+	hm := func(h, m int) time.Duration { return time.Duration(h)*time.Hour + time.Duration(m)*time.Minute }
+	windhoek := Restaurant{ID: "w", OpensAt: hm(9, 0), ClosesAt: hm(22, 0), Timezone: "Africa/Windhoek", IsOpen: true}
+	berlin := Restaurant{ID: "b", OpensAt: hm(9, 0), ClosesAt: hm(22, 0), Timezone: "Europe/Berlin", IsOpen: true}
+	utc := func(y int, mo time.Month, d, h, m int) time.Time { return time.Date(y, mo, d, h, m, 0, 0, time.UTC) }
+
+	cases := []struct {
+		name string
+		r    Restaurant
+		at   time.Time
+		want bool
+	}{
+		// Windhoek is UTC+2 all year.
+		{"windhoek 07:30Z is 09:30 local, open", windhoek, utc(2026, 9, 24, 7, 30), true},
+		{"windhoek 06:30Z is 08:30 local, closed", windhoek, utc(2026, 9, 24, 6, 30), false},
+		{"windhoek 20:30Z is 22:30 local, closed (UTC would say open)", windhoek, utc(2026, 9, 24, 20, 30), false},
+		// Berlin is UTC+1 in winter and UTC+2 in summer: the same UTC
+		// instant lands either side of opening.
+		{"berlin winter 07:30Z is 08:30 local, closed", berlin, utc(2026, 1, 15, 7, 30), false},
+		{"berlin summer 07:30Z is 09:30 local, open", berlin, utc(2026, 7, 15, 7, 30), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := c.r.OpenAtTime(c.at)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != c.want {
+				t.Fatalf("OpenAtTime = %v, want %v", got, c.want)
+			}
+		})
+	}
+
+	if _, err := (Restaurant{ID: "x", Timezone: "Mars/Olympus"}).OpenAtTime(time.Now()); err == nil {
+		t.Fatal("an invalid timezone must be an error, not silently UTC")
+	}
+}
+
+func TestCheckItems(t *testing.T) {
 	catalogue := map[string]MenuItem{
-		"a": {ID: "a", Name: "Burger", StockQty: 5, Available: true},
-		"b": {ID: "b", Name: "Chips", StockQty: 0, Available: true},
-		"c": {ID: "c", Name: "Soup", StockQty: 9, Available: false},
+		"a": {ID: "a", RestaurantID: "r1", Name: "Burger", PriceCents: 8500, StockQty: 5, Available: true},
+		"b": {ID: "b", RestaurantID: "r1", Name: "Chips", PriceCents: 2000, StockQty: 0, Available: true},
+		"c": {ID: "c", RestaurantID: "r1", Name: "Soup", PriceCents: 3000, StockQty: 9, Available: false},
+		"x": {ID: "x", RestaurantID: "r2", Name: "Elsewhere", PriceCents: 100, StockQty: 9, Available: true},
 	}
 	cases := []struct {
 		name   string
 		req    []RequestedItem
 		wantOK bool
 	}{
-		{"in stock", []RequestedItem{{"a", 5}}, true},
-		{"more than stock", []RequestedItem{{"a", 6}}, false},
-		{"out of stock", []RequestedItem{{"b", 1}}, false},
-		{"unavailable", []RequestedItem{{"c", 1}}, false},
-		{"unknown item", []RequestedItem{{"zzz", 1}}, false},
+		{"in stock, right price", []RequestedItem{{"a", 5, 8500}}, true},
+		{"more than stock", []RequestedItem{{"a", 6, 8500}}, false},
+		{"out of stock", []RequestedItem{{"b", 1, 2000}}, false},
+		{"unavailable", []RequestedItem{{"c", 1, 3000}}, false},
+		{"unknown item", []RequestedItem{{"zzz", 1, 1}}, false},
+		{"another restaurant's item", []RequestedItem{{"x", 1, 100}}, false},
+		{"stale or forged price", []RequestedItem{{"a", 1, 1}}, false},
+		{"zero quantity", []RequestedItem{{"a", 0, 8500}}, false},
+		{"empty order", nil, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			ok, reason := CheckStock(catalogue, c.req)
+			ok, reason := CheckItems("r1", catalogue, c.req)
 			if ok != c.wantOK {
 				t.Fatalf("ok = %v (%q), want %v", ok, reason, c.wantOK)
 			}

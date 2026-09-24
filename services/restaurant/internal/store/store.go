@@ -24,9 +24,9 @@ func New(pool *db.Pool) *Store { return &Store{pool: pool} }
 
 func (s *Store) CreateRestaurant(ctx context.Context, r *domain.Restaurant) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO restaurants (id, name, lat, lng, opens_at, closes_at, is_open)
-		VALUES ($1,$2,$3,$4, make_interval(mins => $5), make_interval(mins => $6), $7)`,
-		r.ID, r.Name, r.Lat, r.Lng, r.OpensAt.Minutes(), r.ClosesAt.Minutes(), r.IsOpen)
+		INSERT INTO restaurants (id, name, lat, lng, opens_at, closes_at, timezone, is_open)
+		VALUES ($1,$2,$3,$4, make_interval(mins => $5), make_interval(mins => $6), $7, $8)`,
+		r.ID, r.Name, r.Lat, r.Lng, r.OpensAt.Minutes(), r.ClosesAt.Minutes(), r.Timezone, r.IsOpen)
 	if err != nil {
 		return fmt.Errorf("insert restaurant: %w", err)
 	}
@@ -34,7 +34,7 @@ func (s *Store) CreateRestaurant(ctx context.Context, r *domain.Restaurant) erro
 }
 
 func (s *Store) ListRestaurants(ctx context.Context) ([]*domain.Restaurant, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, name, lat, lng, extract(epoch from opens_at)/60, extract(epoch from closes_at)/60, is_open FROM restaurants ORDER BY name`)
+	rows, err := s.pool.Query(ctx, `SELECT id, name, lat, lng, extract(epoch from opens_at)/60, extract(epoch from closes_at)/60, timezone, is_open FROM restaurants ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list restaurants: %w", err)
 	}
@@ -51,8 +51,13 @@ func (s *Store) ListRestaurants(ctx context.Context) ([]*domain.Restaurant, erro
 }
 
 func (s *Store) GetRestaurant(ctx context.Context, id string) (*domain.Restaurant, error) {
-	row := s.pool.QueryRow(ctx, `SELECT id, name, lat, lng, extract(epoch from opens_at)/60, extract(epoch from closes_at)/60, is_open FROM restaurants WHERE id=$1`, id)
+	row := s.pool.QueryRow(ctx, `SELECT id, name, lat, lng, extract(epoch from opens_at)/60, extract(epoch from closes_at)/60, timezone, is_open FROM restaurants WHERE id=$1`, id)
 	return scanRestaurant(row)
+}
+
+// GetRestaurantTx is GetRestaurant inside a transaction (the consumer's).
+func GetRestaurantTx(ctx context.Context, tx pgx.Tx, id string) (*domain.Restaurant, error) {
+	return scanRestaurant(tx.QueryRow(ctx, `SELECT id, name, lat, lng, extract(epoch from opens_at)/60, extract(epoch from closes_at)/60, timezone, is_open FROM restaurants WHERE id=$1`, id))
 }
 
 type rowScanner interface{ Scan(dest ...any) error }
@@ -60,7 +65,7 @@ type rowScanner interface{ Scan(dest ...any) error }
 func scanRestaurant(row rowScanner) (*domain.Restaurant, error) {
 	r := &domain.Restaurant{}
 	var opensMin, closesMin float64
-	err := row.Scan(&r.ID, &r.Name, &r.Lat, &r.Lng, &opensMin, &closesMin, &r.IsOpen)
+	err := row.Scan(&r.ID, &r.Name, &r.Lat, &r.Lng, &opensMin, &closesMin, &r.Timezone, &r.IsOpen)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound

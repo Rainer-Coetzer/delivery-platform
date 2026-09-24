@@ -25,11 +25,17 @@ import (
 // dead-lettered it while delivery still dispatched a driver (audit P1).
 var ErrNotPreparing = errors.New("order is not being prepared")
 
-func MarkReady(ctx context.Context, pool *db.Pool, orderID string) error {
+// MarkReady marks orderID ready. restaurantID, when non-empty, must own the
+// order; a mismatch reports store.ErrNotFound so one restaurant can't probe
+// another's order ids. The autopilot passes "" (it acts for every kitchen).
+func MarkReady(ctx context.Context, pool *db.Pool, restaurantID, orderID string) error {
 	return pool.WithTx(ctx, func(tx pgx.Tx) error {
 		ro, err := store.GetRestaurantOrderForUpdate(ctx, tx, orderID)
 		if err != nil {
 			return err
+		}
+		if restaurantID != "" && ro.RestaurantID != restaurantID {
+			return store.ErrNotFound
 		}
 		if ro.Status != store.StatusPreparing {
 			return fmt.Errorf("%w: order %s is %s", ErrNotPreparing, orderID, ro.Status)
@@ -85,7 +91,7 @@ func (a *Autopilot) tick(ctx context.Context) {
 		if !domain.DueForReady(now, p.PreparingSince, a.PrepTime) {
 			continue
 		}
-		err := MarkReady(ctx, a.Pool, p.OrderID)
+		err := MarkReady(ctx, a.Pool, "", p.OrderID)
 		switch {
 		case err == nil:
 			a.Log.Info("autopilot marked order ready", "orderId", p.OrderID)
