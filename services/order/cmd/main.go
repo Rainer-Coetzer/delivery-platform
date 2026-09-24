@@ -11,8 +11,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/cors"
 
+	"github.com/rainercoetzer/delivery-platform/pkg/auth"
+	"github.com/rainercoetzer/delivery-platform/pkg/config"
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
@@ -20,6 +21,7 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/obs"
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
 	"github.com/rainercoetzer/delivery-platform/services/order/internal/api"
+	"github.com/rainercoetzer/delivery-platform/services/order/internal/catalogue"
 	"github.com/rainercoetzer/delivery-platform/services/order/internal/consumers"
 	"github.com/rainercoetzer/delivery-platform/services/order/internal/migrations"
 	"github.com/rainercoetzer/delivery-platform/services/order/internal/store"
@@ -81,9 +83,18 @@ func main() {
 	handlers := &consumers.Handlers{Pool: pool, Log: log}
 	go consumer.Run(ctx, handlers.Handle)
 
-	a := &api.API{Pool: pool, Store: store.New(pool), Log: log}
+	secret, err := config.JWTSecret()
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+	a := &api.API{
+		Pool: pool, Store: store.New(pool), Log: log,
+		Catalogue: catalogue.New(env("RESTAURANT_SERVICE_URL", "http://restaurant-service:8082")),
+		Auth:      auth.NewIssuer(secret, 0).Middleware,
+	}
+	// No CORS: only the gateway is browser-facing (see customer-service).
 	router := chi.NewRouter()
-	router.Use(corsMiddleware())
 	router.Use(httpx.RequestLogger(serviceName, log))
 	router.Get("/metrics", obs.MetricsHandler().ServeHTTP)
 	a.Routes(router)
@@ -101,15 +112,6 @@ func main() {
 		log.Error("server error", "error", err)
 		os.Exit(1)
 	}
-}
-
-func corsMiddleware() func(http.Handler) http.Handler {
-	return cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Authorization", "Content-Type"},
-		AllowCredentials: false,
-	})
 }
 
 func env(key, fallback string) string {
