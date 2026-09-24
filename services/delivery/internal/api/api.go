@@ -27,7 +27,6 @@ type API struct {
 }
 
 func (a *API) Routes(r chi.Router) {
-	r.Get("/healthz", httpx.Health)
 	r.Route("/drivers", func(r chi.Router) {
 		r.Use(a.Auth)
 		// Admins onboard drivers; the admin then creates the driver's login

@@ -12,7 +12,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/auth"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
@@ -25,8 +24,10 @@ type AuthAPI struct {
 	httpClient         *http.Client
 }
 
-func NewAuthAPI(customerServiceURL string, issuer *auth.Issuer, log *slog.Logger) *AuthAPI {
-	return &AuthAPI{CustomerServiceURL: customerServiceURL, Issuer: issuer, Log: log, httpClient: &http.Client{Timeout: 5 * time.Second}}
+// NewAuthAPI calls the customer module through client: the network between
+// microservices, in-memory inside cmd/platform.
+func NewAuthAPI(customerServiceURL string, client *http.Client, issuer *auth.Issuer, log *slog.Logger) *AuthAPI {
+	return &AuthAPI{CustomerServiceURL: customerServiceURL, Issuer: issuer, Log: log, httpClient: client}
 }
 
 type loginRequest struct {

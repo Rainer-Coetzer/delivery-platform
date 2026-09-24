@@ -19,7 +19,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"time"
 
 	"github.com/rainercoetzer/delivery-platform/services/order/internal/domain"
 )
@@ -39,8 +38,10 @@ type Client struct {
 	HTTP    *http.Client
 }
 
-func New(baseURL string) *Client {
-	return &Client{BaseURL: baseURL, HTTP: &http.Client{Timeout: 5 * time.Second}}
+// New uses client for the calls: a network client between microservices,
+// the in-memory one inside cmd/platform (pkg/app).
+func New(baseURL string, client *http.Client) *Client {
+	return &Client{BaseURL: baseURL, HTTP: client}
 }
 
 // Fetch returns the restaurant and its menu keyed by item id.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/url"
-	"time"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/auth"
 )
@@ -19,8 +18,8 @@ type OrderAccess struct {
 	HTTP            *http.Client
 }
 
-func NewOrderAccess(orderServiceURL string, issuer *auth.Issuer) *OrderAccess {
-	return &OrderAccess{OrderServiceURL: orderServiceURL, Issuer: issuer, HTTP: &http.Client{Timeout: 5 * time.Second}}
+func NewOrderAccess(orderServiceURL string, client *http.Client, issuer *auth.Issuer) *OrderAccess {
+	return &OrderAccess{OrderServiceURL: orderServiceURL, Issuer: issuer, HTTP: client}
 }
 
 // Authorize matches Hub.Authorize. A bad token is rejected locally before

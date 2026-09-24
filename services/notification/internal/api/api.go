@@ -19,7 +19,6 @@ type API struct {
 }
 
 func (a *API) Routes(r chi.Router) {
-	r.Get("/healthz", httpx.Health)
 	r.Route("/notifications", func(r chi.Router) {
 		r.Use(a.Auth)
 		r.Get("/", a.list)

@@ -22,7 +22,6 @@ type API struct {
 }
 
 func (a *API) Routes(r chi.Router) {
-	r.Get("/healthz", httpx.Health)
 	r.With(a.Auth).Get("/payments/{orderId}", a.getPayment)
 }
 

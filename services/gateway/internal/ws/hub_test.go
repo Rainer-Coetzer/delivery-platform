@@ -58,7 +58,7 @@ func TestOrderAccess(t *testing.T) {
 	}))
 	defer orders.Close()
 
-	oa := NewOrderAccess(orders.URL, issuer)
+	oa := NewOrderAccess(orders.URL, orders.Client(), issuer)
 	if got := oa.Authorize(context.Background(), "garbage", "mine"); got != 401 {
 		t.Fatalf("bad token: %d, want 401 without calling the order service", got)
 	}

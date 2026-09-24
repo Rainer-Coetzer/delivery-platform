@@ -31,7 +31,6 @@ type API struct {
 // admin-only; menus and kitchen actions belong to the restaurant itself
 // (its account's refId) or an admin.
 func (a *API) Routes(r chi.Router) {
-	r.Get("/healthz", httpx.Health)
 	r.Route("/restaurants", func(r chi.Router) {
 		r.Use(a.Auth)
 		r.Get("/", a.listRestaurants)

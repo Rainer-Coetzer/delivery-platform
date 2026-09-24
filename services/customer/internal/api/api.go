@@ -27,14 +27,14 @@ type API struct {
 // Routes: registration and verify are public, everything else needs a
 // token. Ownership is checked per handler.
 func (a *API) Routes(r chi.Router) {
-	r.Get("/healthz", httpx.Health)
-	r.Route("/auth", func(r chi.Router) {
-		r.Post("/register", a.register)
-		// verify is only for the gateway's login handler. It is not routed
-		// publicly by the gateway, and backends have no host ports; it is
-		// no more powerful than /auth/login itself.
-		r.Post("/verify", a.verify)
-	})
+	// Flat routes, not r.Route("/auth"): in the platform binary every module
+	// shares one router, and a mounted /auth subrouter would swallow the
+	// gateway's /auth/login.
+	r.Post("/auth/register", a.register)
+	// verify is only for the gateway's login handler. The gateway never
+	// routes it publicly and backends have no host ports; it is no more
+	// powerful than /auth/login itself.
+	r.Post("/auth/verify", a.verify)
 	r.Group(func(r chi.Router) {
 		r.Use(a.Auth)
 		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/users", a.createUser)
