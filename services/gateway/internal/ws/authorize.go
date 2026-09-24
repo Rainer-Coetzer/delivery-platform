@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/auth"
@@ -28,10 +29,12 @@ func (o *OrderAccess) Authorize(ctx context.Context, token, orderID string) int 
 	if _, err := o.Issuer.Verify(token); err != nil {
 		return http.StatusUnauthorized
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.OrderServiceURL+"/orders/"+orderID, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.OrderServiceURL+"/orders/"+url.PathEscape(orderID), nil)
 	if err != nil {
 		return http.StatusBadRequest // orderID made an invalid URL
 	}
+	// PathEscape: orderId is client input. Unescaped, "x/../y" would ask the
+	// order service a different question than the room the client joins.
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := o.HTTP.Do(req)
 	if err != nil {

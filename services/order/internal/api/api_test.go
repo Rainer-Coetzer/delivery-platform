@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/auth"
+	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/services/order/internal/domain"
 )
 
@@ -86,5 +87,24 @@ func TestRouteRoles(t *testing.T) {
 				t.Fatalf("status = %d, want %d (%s)", rec.Code, c.want, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestValidDropoff(t *testing.T) {
+	cases := []struct {
+		name     string
+		lat, lng float64
+		want     bool
+	}{
+		{"windhoek", -22.56, 17.08, true},
+		{"omitted decodes to 0,0", 0, 0, false},
+		{"lat out of range", 91, 17, false},
+		{"lng out of range", -22, 181, false},
+		{"equator is fine when lng isn't 0", 0, 17.08, true},
+	}
+	for _, c := range cases {
+		if got := validDropoff(events.Location{Lat: c.lat, Lng: c.lng}); got != c.want {
+			t.Errorf("%s: validDropoff = %v, want %v", c.name, got, c.want)
+		}
 	}
 }

@@ -141,8 +141,8 @@ func (a *API) createMenuItem(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, "invalid body: "+err.Error())
 		return
 	}
-	if req.Name == "" || req.PriceCents <= 0 {
-		httpx.BadRequest(w, "name and a positive priceCents are required")
+	if req.Name == "" || req.PriceCents <= 0 || req.StockQty < 0 {
+		httpx.BadRequest(w, "name, a positive priceCents and a non-negative stockQty are required")
 		return
 	}
 	item := &domain.MenuItem{
@@ -173,6 +173,12 @@ func (a *API) updateMenuItem(w http.ResponseWriter, r *http.Request) {
 	var req menuItemRequest
 	if err := httpx.Decode(r, &req); err != nil {
 		httpx.BadRequest(w, "invalid body: "+err.Error())
+		return
+	}
+	// Same rules as create: a zero or negative price would flow straight
+	// into order totals and payment amounts.
+	if req.Name == "" || req.PriceCents <= 0 || req.StockQty < 0 {
+		httpx.BadRequest(w, "name, a positive priceCents and a non-negative stockQty are required")
 		return
 	}
 	item := &domain.MenuItem{

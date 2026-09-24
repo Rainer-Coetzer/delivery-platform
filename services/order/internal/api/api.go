@@ -86,6 +86,10 @@ func (a *API) createOrder(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, "restaurantId and paymentMethod are required")
 		return
 	}
+	if !validDropoff(req.Dropoff) {
+		httpx.BadRequest(w, "dropoff must be a real coordinate (lat -90..90, lng -180..180)")
+		return
+	}
 
 	ctx := r.Context()
 	rest, menu, err := a.Catalogue.Fetch(ctx, r.Header.Get("Authorization"), req.RestaurantID)
@@ -170,6 +174,16 @@ func (a *API) createOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, order)
+}
+
+// validDropoff rejects out-of-range coordinates and the 0,0 an omitted
+// dropoff decodes to (a point in the Atlantic that would send a driver
+// nowhere useful).
+func validDropoff(l events.Location) bool {
+	if l.Lat == 0 && l.Lng == 0 {
+		return false
+	}
+	return l.Lat >= -90 && l.Lat <= 90 && l.Lng >= -180 && l.Lng <= 180
 }
 
 // CanView reports whether caller may see order o: its customer, its

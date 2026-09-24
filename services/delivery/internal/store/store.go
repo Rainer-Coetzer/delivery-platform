@@ -52,13 +52,25 @@ func (s *Store) RegisterDriver(ctx context.Context, d *Driver) error {
 	return nil
 }
 
+// ErrDriverBusy: a driver on a delivery can't toggle themselves AVAILABLE
+// (they'd be dispatched a second order) or OFFLINE (the delivery would be
+// orphaned). BUSY ends only via completion or cancellation.
+var ErrDriverBusy = errors.New("driver is on a delivery")
+
 func (s *Store) SetDriverStatus(ctx context.Context, id, status string) error {
-	ct, err := s.pool.Exec(ctx, `UPDATE drivers SET status=$2, updated_at=now() WHERE id=$1`, id, status)
-	if err != nil {
-		return fmt.Errorf("set driver status: %w", err)
-	}
-	if ct.RowsAffected() == 0 {
+	var current string
+	err := s.pool.QueryRow(ctx, `
+		UPDATE drivers d SET status = CASE WHEN d.status = 'BUSY' THEN d.status ELSE $2 END, updated_at = now()
+		FROM drivers old WHERE d.id = $1 AND old.id = d.id
+		RETURNING old.status`, id, status).Scan(&current)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("set driver %s status: %w", id, err)
+	}
+	if current == "BUSY" {
+		return ErrDriverBusy
 	}
 	return nil
 }

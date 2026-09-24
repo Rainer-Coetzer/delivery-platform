@@ -124,6 +124,10 @@ func (a *API) setDriverStatus(w http.ResponseWriter, r *http.Request) {
 			httpx.NotFound(w, "driver not found")
 			return
 		}
+		if errors.Is(err, store.ErrDriverBusy) {
+			httpx.Conflict(w, "finish the current delivery first")
+			return
+		}
 		httpx.Internal(w, "could not update driver status")
 		return
 	}

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/rainercoetzer/delivery-platform/services/order/internal/domain"
@@ -44,8 +45,11 @@ func New(baseURL string) *Client {
 
 // Fetch returns the restaurant and its menu keyed by item id.
 func (c *Client) Fetch(ctx context.Context, authorization, restaurantID string) (*Restaurant, map[string]domain.CatalogueItem, error) {
+	// restaurantID is client input: escape it so it can only ever name one
+	// path segment on the restaurant service.
+	id := url.PathEscape(restaurantID)
 	var r Restaurant
-	if err := c.get(ctx, authorization, "/restaurants/"+restaurantID, &r); err != nil {
+	if err := c.get(ctx, authorization, "/restaurants/"+id, &r); err != nil {
 		return nil, nil, err
 	}
 	var menu []struct {
@@ -54,7 +58,7 @@ func (c *Client) Fetch(ctx context.Context, authorization, restaurantID string) 
 		PriceCents int64  `json:"priceCents"`
 		Available  bool   `json:"available"`
 	}
-	if err := c.get(ctx, authorization, "/restaurants/"+restaurantID+"/menu-items", &menu); err != nil {
+	if err := c.get(ctx, authorization, "/restaurants/"+id+"/menu-items", &menu); err != nil {
 		return nil, nil, err
 	}
 	out := make(map[string]domain.CatalogueItem, len(menu))
