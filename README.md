@@ -22,39 +22,53 @@ A distributed food delivery platform built with **Go** microservices, **Kafka**,
 Prerequisites: Docker and Go 1.26+ (the seed and e2e tools are small Go
 programs, so no `jq` or other CLI tools are needed).
 
-**One command, end to end.** This builds and starts the stack with the demo
-autopilot on, seeds demo data, places an order and waits for `DELIVERED`:
+There are two deployment shapes of the same code
+([ADR-0002](docs/adr/0002-modular-monolith.md)), chosen with a compose profile:
+
+| Profile | What runs | Use it for |
+|---|---|---|
+| `pilot` | `cmd/platform` (every module in one process) + Postgres/PostGIS + Caddy. In-process events bus in Postgres. About 126 MiB idle. | a client's VPS; the default everywhere |
+| `full` | the eight services + Kafka + Prometheus/Grafana/Jaeger | the microservice shape; Kafka work |
+
+**One command, end to end.** This builds and starts the `pilot` stack with
+the demo autopilot on, seeds demo data, places an order through the gateway
+and waits for `DELIVERED`:
 
 ```bash
-./scripts/e2e.sh
+./scripts/e2e.sh                    # pilot
+E2E_PROFILE=full ./scripts/e2e.sh   # microservices + Kafka
 ```
 
 **Just running it:**
 
 ```bash
 cp .env.example .env
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build   # autopilot on
+docker compose --profile pilot -f docker-compose.yml -f docker-compose.dev.yml up --build
 ./infra/seed/seed.sh
 ```
+
+The gateway is on http://localhost:8080 (Caddy in `pilot`, the gateway
+service in `full`). If something already uses 8080, set
+`GATEWAY_HOST_PORT=18080` and `GATEWAY_URL=http://localhost:18080`.
 
 Without `-f docker-compose.dev.yml`, `DEMO_AUTOPILOT` is off. Orders then
 stop at `PREPARING` until restaurant staff mark them ready and a driver taps
 picked-up and delivered, which is the real-world flow.
 
-| Flag | Service | Default | Dev overlay |
-|---|---|---|---|
-| `DEMO_AUTOPILOT` | restaurant, delivery | `false` | `true` |
-| `AUTOPILOT_PREP_TIME` | restaurant | `20s` | `5s` |
-| `SIM_STEP_METERS` | delivery | `60` | `300` |
-| `POSTGRES_HOST_PORT` | postgres | `55432` | |
+| Setting | Default | Dev overlay |
+|---|---|---|
+| `DEMO_AUTOPILOT` | `false` | `true` |
+| `AUTOPILOT_PREP_TIME` | `20s` | `5s` |
+| `SIM_STEP_METERS` | `60` | `300` |
+| `EVENTS_BUS` | `inprocess` (platform), `kafka` (services) | |
+| `PLATFORM_MODULES` | all | |
+| `POSTGRES_HOST_PORT` | `55432` | |
+| `GATEWAY_HOST_PORT` | `8080` | |
+| `SITE_ADDRESS` (Caddy) | `:80` (plain HTTP) | set to the client's domain for automatic HTTPS |
 
-Useful UIs while it's running:
-
-- Gateway: http://localhost:8080
-- Kafka UI: http://localhost:8090
-- Grafana: http://localhost:3000 (anonymous access, dev only)
-- Prometheus: http://localhost:9090
-- Jaeger: http://localhost:16686 (deployed, but no tracing code yet)
+In the `full` profile, the UIs bind to 127.0.0.1: Kafka UI on :8090,
+Grafana on :3000 (anonymous Viewer), Prometheus on :9090, Jaeger on :16686
+(no tracing code yet).
 
 Run the Flutter client: see [apps/delivery_app/README.md](apps/delivery_app/README.md)
 for first-time platform setup (`flutter create`).
@@ -101,17 +115,20 @@ TEST_DATABASE_URL="postgres://postgres:postgres@localhost:55432/postgres?sslmode
 Integration tests skip when `TEST_DATABASE_URL` is unset, and each test gets
 its own throwaway database (`pkg/db/dbtest`).
 
-Each service is self-contained under `services/<name>/` (its own
-migrations, domain logic, store, API and Kafka consumer) and shares common
-code from `pkg/` — event types, the Kafka client, the outbox pattern, DB
-helpers, JWT auth and observability. `pkg/events/events.go` is the single
-source of truth for every Kafka topic and payload shape.
+Each module lives under `services/<name>/`: its migrations, domain logic,
+store, API and consumers, plus a `module.go` that describes it to
+`pkg/app`. The same `module.go` runs standalone (`services/<name>/cmd`) or
+inside `cmd/platform`. Shared code lives in `pkg/`: event types and the
+`events/bus` (in-process and Kafka), the outbox, DB helpers, JWT auth, the
+`app` service kit and observability. `pkg/events/events.go` is the single
+source of truth for every topic and payload shape.
 
 ## Repo layout
 
 ```
-pkg/            shared Go module: events, kafka, outbox, db, httpx, auth, obs
-services/       one folder per microservice (see table above)
+cmd/platform    every module in one binary (the pilot deployment)
+pkg/            shared: app (service kit), events + events/bus, kafka, outbox, db, httpx, auth, obs, config
+services/       one folder per module (see table above), each with module.go + cmd/
 apps/delivery_app/  Flutter client
 infra/          postgres init, kafka topic creation, seed data, prometheus/grafana config
 scripts/e2e.sh  end-to-end order flow check (logic in tools/e2e)

@@ -139,21 +139,49 @@ weeks. The event contract (`pkg/events`) is the asset worth keeping.
   that are older than N days, Phase F). Per-module statement timeouts. Whether
   the microservice shape still earns its CI minutes.
 
+## Measured (Phase B, 24 September 2026)
+
+`pilot` profile, seeded, after one completed e2e order, then 5 minutes
+idle (`docker stats`, Docker Desktop on Windows, Postgres 16 + PostGIS,
+dev settings):
+
+| Container | RAM | CPU |
+|---|---|---|
+| platform (all 8 modules) | 11.1 MiB | 0.9% |
+| postgres | 103.5 MiB | 0.4% |
+| caddy | 11.1 MiB | 0.0% |
+| **total** | **~126 MiB** | |
+
+Target was < 1 GB. The first measurement showed 4.5% idle Postgres CPU
+from bus polling (24 dispatchers × 3 queries every 2s). Moving wakeups to
+NOTIFY and the fallback poll to 30s fixed it. Numbers under load and on
+a real VPS are Phase F's job.
+
+What building it surfaced, each now a regression test:
+- `search_path` in a DSN must have no space (`url.Values` encodes it as
+  `+`, and pgx keeps it literally).
+- Goose's version-table name must be unquoted.
+- The tzdata import must live in the module, not in a `main`.
+- In-process calls need a fresh context: chi's routing state and the
+  caller's claims leak through otherwise.
+- The edge must hide internal-only routes (`/auth/verify`), now that
+  every module shares the public router.
+
 ## Action items (Phase B)
 
-1. [ ] `pkg/events/bus`: `Bus` interface; `inprocess` (log, offsets,
+1. [x] `pkg/events/bus`: `Bus` interface; `inprocess` (log, offsets,
    dispatcher, DLQ) and `kafka` implementations; one contract suite run
    against both: per-key ordering, at-least-once after a crash, dedupe via
    `processed_events`, DLQ on permanent errors.
-2. [ ] Module constructors: each service's wiring moves into a `Module`
+2. [x] Module constructors: each service's wiring moves into a `Module`
    (migrations, routes, handlers, workers), used by both `cmd/platform` and
    the per-service `cmd/`.
-3. [ ] Schema-per-module migrations with a per-schema goose table and an
+3. [x] Schema-per-module migrations with a per-schema goose table and an
    advisory lock. The monolith starts from fresh schemas: today's data sits
    in seven separate databases, which `ALTER ... SET SCHEMA` can't move
    between. No client data exists yet, so there's nothing to carry over.
    A `pg_dump` per service into its schema is the documented path if that
    ever changes.
-4. [ ] In-memory RoundTripper for inter-module HTTP.
-5. [ ] Compose `pilot` (platform, Postgres, Caddy) and `full` profiles;
+4. [x] In-memory RoundTripper for inter-module HTTP.
+5. [x] Compose `pilot` (platform, Postgres, Caddy) and `full` profiles;
    measure idle RAM and write the number down.

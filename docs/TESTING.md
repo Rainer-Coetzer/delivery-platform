@@ -81,6 +81,9 @@ existing check line and e2e still pass.
 
 ### Phase B: modular monolith
 
+Status: **done** (24 September 2026). Contract suite green on both buses,
+pilot and full e2e, idle RAM ~126 MiB (ADR-0002 "Measured").
+
 | Test | Type | Proves |
 |---|---|---|
 | Bus contract suite passes on `inprocess` **and** `kafka`: per-key ordering; at-least-once after a dispatcher crash mid-batch; dedupe via `processed_events`; permanent error → DLQ on the first attempt; transient error → retried; two groups each see every event | contract | the two implementations are interchangeable |
