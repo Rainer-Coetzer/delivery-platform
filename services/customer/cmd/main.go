@@ -4,6 +4,9 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,8 +14,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/cors"
 
+	"github.com/rainercoetzer/delivery-platform/pkg/auth"
+	"github.com/rainercoetzer/delivery-platform/pkg/config"
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
@@ -67,9 +71,22 @@ func main() {
 	handlers := &consumers.Handlers{Pool: pool, Log: log}
 	go consumer.Run(ctx, handlers.Handle)
 
-	a := &api.API{Store: store.New(pool), Log: log}
+	secret, err := config.JWTSecret()
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+	st := store.New(pool)
+	if err := bootstrapAdmin(ctx, st, log); err != nil {
+		log.Error("bootstrap admin", "error", err)
+		os.Exit(1)
+	}
+
+	a := &api.API{Store: st, Log: log, Auth: auth.NewIssuer(secret, 0).Middleware}
+	// No CORS here: browsers only ever talk to the gateway. CORS headers
+	// from a backend would be proxied through and duplicate the gateway's,
+	// which browsers reject.
 	router := chi.NewRouter()
-	router.Use(cors.Handler(cors.Options{AllowedOrigins: []string{"*"}, AllowedMethods: []string{"GET", "POST", "OPTIONS"}, AllowedHeaders: []string{"Authorization", "Content-Type"}}))
 	router.Use(httpx.RequestLogger(serviceName, log))
 	router.Get("/metrics", obs.MetricsHandler().ServeHTTP)
 	a.Routes(router)
@@ -87,6 +104,38 @@ func main() {
 		log.Error("server error", "error", err)
 		os.Exit(1)
 	}
+}
+
+// bootstrapAdmin creates the first admin from BOOTSTRAP_ADMIN_EMAIL and
+// BOOTSTRAP_ADMIN_PASSWORD if that email isn't registered yet. It is the only
+// way to get an admin: public registration creates customers only. Both
+// unset means "don't bootstrap"; setting just one is a config mistake.
+func bootstrapAdmin(ctx context.Context, st *store.Store, log *slog.Logger) error {
+	email, password := os.Getenv("BOOTSTRAP_ADMIN_EMAIL"), os.Getenv("BOOTSTRAP_ADMIN_PASSWORD")
+	if email == "" && password == "" {
+		return nil
+	}
+	if email == "" || password == "" {
+		return fmt.Errorf("set both BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD, or neither")
+	}
+	if !config.IsDev() && len(password) < 12 {
+		return fmt.Errorf("BOOTSTRAP_ADMIN_PASSWORD must be at least 12 characters outside PROFILE=dev")
+	}
+	if _, err := st.GetByEmail(ctx, email); err == nil {
+		log.Info("bootstrap admin already exists", "email", email)
+		return nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	u, err := api.NewUser(config.String("BOOTSTRAP_ADMIN_NAME", "Admin"), email, password, auth.RoleAdmin, "")
+	if err != nil {
+		return err
+	}
+	if err := st.CreateUser(ctx, u); err != nil && !errors.Is(err, store.ErrDuplicateEmail) {
+		return err // duplicate = another replica won the race, which is fine
+	}
+	log.Info("bootstrap admin created", "email", email)
+	return nil
 }
 
 func env(key, fallback string) string {

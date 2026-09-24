@@ -1,6 +1,6 @@
-// Package api exposes account registration/verification (used internally by
-// the gateway to issue JWTs) and customer profile, address and order-history
-// endpoints.
+// Package api exposes account registration and verification (verify is
+// called by the gateway during login), admin account creation, and the
+// customer profile, address and order-history endpoints.
 package api
 
 import (
@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/rainercoetzer/delivery-platform/pkg/auth"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
 	"github.com/rainercoetzer/delivery-platform/services/customer/internal/store"
 )
@@ -19,19 +20,43 @@ import (
 type API struct {
 	Store *store.Store
 	Log   *slog.Logger
+	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
+	Auth func(http.Handler) http.Handler
 }
 
+// Routes: registration and verify are public, everything else needs a
+// token. Ownership is checked per handler.
 func (a *API) Routes(r chi.Router) {
 	r.Get("/healthz", httpx.Health)
 	r.Route("/auth", func(r chi.Router) {
 		r.Post("/register", a.register)
-		r.Post("/verify", a.verify) // internal: called by the gateway during login
+		// verify is only for the gateway's login handler. It is not routed
+		// publicly by the gateway, and backends have no host ports; it is
+		// no more powerful than /auth/login itself.
+		r.Post("/verify", a.verify)
 	})
-	r.Route("/customers", func(r chi.Router) {
-		r.Get("/{id}", a.getProfile)
-		r.Post("/{id}/addresses", a.addAddress)
-		r.Get("/{id}/addresses", a.listAddresses)
-		r.Get("/{id}/orders", a.orderHistory)
+	r.Group(func(r chi.Router) {
+		r.Use(a.Auth)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/users", a.createUser)
+		r.Route("/customers/{id}", func(r chi.Router) {
+			r.Use(selfOrAdmin)
+			r.Get("/", a.getProfile)
+			r.Post("/addresses", a.addAddress)
+			r.Get("/addresses", a.listAddresses)
+			r.Get("/orders", a.orderHistory)
+		})
+	})
+}
+
+// selfOrAdmin lets a user reach only their own /customers/{id} subtree.
+func selfOrAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c := auth.MustFromContext(r.Context())
+		if !c.IsAdmin() && c.UserID != chi.URLParam(r, "id") {
+			httpx.Forbidden(w, "you can only access your own account")
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -39,8 +64,11 @@ type registerRequest struct {
 	Name     string `json:"name"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
-	Role     string `json:"role"`  // customer, restaurant, driver, admin
-	RefID    string `json:"refId"` // restaurantId/driverId, set once that entity exists
+	// Role and RefID are accepted only so a client that still sends them
+	// gets a clear 400 instead of "unknown field". Public registration
+	// always creates a customer (audit P0-3: anyone could register as admin).
+	Role  string `json:"role"`
+	RefID string `json:"refId"`
 }
 
 func (a *API) register(w http.ResponseWriter, r *http.Request) {
@@ -49,35 +77,92 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, "invalid body: "+err.Error())
 		return
 	}
-	if req.Name == "" || req.Email == "" || len(req.Password) < 8 {
+	if req.Role != "" && req.Role != string(auth.RoleCustomer) {
+		httpx.BadRequest(w, "public registration creates customer accounts only; restaurant, driver and admin accounts are created by an admin")
+		return
+	}
+	if req.RefID != "" {
+		httpx.BadRequest(w, "refId can't be set on registration")
+		return
+	}
+	a.create(w, r, req.Name, req.Email, req.Password, auth.RoleCustomer, "")
+}
+
+type createUserRequest struct {
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Role     string `json:"role"`
+	RefID    string `json:"refId"`
+}
+
+// createUser is the admin onboarding path: it creates a restaurant or driver
+// account already linked (refId) to the restaurant/driver the admin created
+// in that service, or another admin.
+func (a *API) createUser(w http.ResponseWriter, r *http.Request) {
+	var req createUserRequest
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.BadRequest(w, "invalid body: "+err.Error())
+		return
+	}
+	role := auth.Role(req.Role)
+	if !auth.ValidRole(role) {
+		httpx.BadRequest(w, "role must be customer, restaurant, driver or admin")
+		return
+	}
+	needsRef := role == auth.RoleRestaurant || role == auth.RoleDriver
+	if needsRef && req.RefID == "" {
+		httpx.BadRequest(w, "restaurant and driver accounts need refId (the restaurant or driver id)")
+		return
+	}
+	if !needsRef && req.RefID != "" {
+		httpx.BadRequest(w, "refId only applies to restaurant and driver accounts")
+		return
+	}
+	a.create(w, r, req.Name, req.Email, req.Password, role, req.RefID)
+}
+
+func (a *API) create(w http.ResponseWriter, r *http.Request, name, email, password string, role auth.Role, refID string) {
+	if name == "" || email == "" || len(password) < 8 {
 		httpx.BadRequest(w, "name, email and a password of at least 8 characters are required")
 		return
 	}
-	if req.Role == "" {
-		req.Role = "customer"
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	u, err := NewUser(name, email, password, role, refID)
 	if err != nil {
 		httpx.Internal(w, "could not hash password")
 		return
 	}
-	u := &store.User{ID: uuid.NewString(), Name: req.Name, Email: req.Email, PasswordHash: string(hash), Role: req.Role, RefID: req.RefID}
 	if err := a.Store.CreateUser(r.Context(), u); err != nil {
 		if errors.Is(err, store.ErrDuplicateEmail) {
 			httpx.Conflict(w, "email already registered")
 			return
 		}
-		a.Log.Error("register", "error", err)
-		httpx.Internal(w, "could not register")
+		a.Log.Error("create user", "role", role, "error", err)
+		httpx.Internal(w, "could not create account")
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, publicUser(u))
+}
+
+// NewUser hashes the password and builds a user row. Also used by the
+// bootstrap admin at startup.
+func NewUser(name, email, password string, role auth.Role, refID string) (*store.User, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	return &store.User{ID: uuid.NewString(), Name: name, Email: email, PasswordHash: string(hash), Role: string(role), RefID: refID}, nil
 }
 
 type verifyRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 }
+
+// dummyHash is compared against when the email doesn't exist, so a missing
+// account takes as long as a wrong password. Without it, response time
+// tells an attacker which emails are registered.
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("timing-equaliser"), bcrypt.DefaultCost)
 
 // verify checks credentials and returns the profile the gateway signs into
 // a JWT. It never returns the password hash.
@@ -89,6 +174,7 @@ func (a *API) verify(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := a.Store.GetByEmail(r.Context(), req.Email)
 	if err != nil {
+		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(req.Password))
 		httpx.Unauthorized(w, "invalid email or password")
 		return
 	}
