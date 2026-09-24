@@ -1,5 +1,6 @@
 // Package consumers reacts to orders.created (accept or reject based on
-// opening hours and stock) and orders.cancelled (release any reserved
+// opening hours and stock), orders.status-changed (the kitchen starts once
+// the order reaches PREPARING) and orders.cancelled (release any reserved
 // stock).
 package consumers
 
@@ -17,6 +18,9 @@ import (
 	"github.com/rainercoetzer/delivery-platform/services/restaurant/internal/store"
 )
 
+// Topics this service consumes, kept next to the handlers that use them.
+var Topics = []string{events.OrderCreated, events.OrderStatusChanged, events.OrderCancelled}
+
 type Handlers struct {
 	Pool *db.Pool
 	Log  *slog.Logger
@@ -30,6 +34,12 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 			return err
 		}
 		return h.handleOrderCreated(ctx, env, data)
+	case events.OrderStatusChanged:
+		data, err := events.Decode[events.OrderStatusChangedData](env)
+		if err != nil {
+			return err
+		}
+		return h.handleStatusChanged(ctx, env, data)
 	case events.OrderCancelled:
 		data, err := events.Decode[events.OrderCancelledData](env)
 		if err != nil {
@@ -52,7 +62,7 @@ func (h *Handlers) handleOrderCreated(ctx context.Context, env events.Envelope, 
 		}
 
 		if err := store.InsertRestaurantOrder(ctx, tx, &store.RestaurantOrder{
-			OrderID: data.OrderID, RestaurantID: data.RestaurantID, Status: "PENDING",
+			OrderID: data.OrderID, RestaurantID: data.RestaurantID, Status: store.StatusPending,
 			Items: data.Items, Pickup: data.Pickup, Dropoff: data.Dropoff,
 		}); err != nil {
 			return err
@@ -83,7 +93,7 @@ func (h *Handlers) handleOrderCreated(ctx context.Context, env events.Envelope, 
 		}
 
 		if !ok {
-			if err := store.UpdateRestaurantOrderStatus(ctx, tx, data.OrderID, "REJECTED", reason); err != nil {
+			if err := store.UpdateRestaurantOrderStatus(ctx, tx, data.OrderID, store.StatusRejected, reason); err != nil {
 				return err
 			}
 			return publishDecision(ctx, tx, events.RestaurantRejected, data.OrderID, data.RestaurantID, reason)
@@ -92,7 +102,7 @@ func (h *Handlers) handleOrderCreated(ctx context.Context, env events.Envelope, 
 		if err := store.DecrementStock(ctx, tx, requested); err != nil {
 			return err
 		}
-		if err := store.UpdateRestaurantOrderStatus(ctx, tx, data.OrderID, "ACCEPTED", ""); err != nil {
+		if err := store.UpdateRestaurantOrderStatus(ctx, tx, data.OrderID, store.StatusAccepted, ""); err != nil {
 			return err
 		}
 		return publishDecision(ctx, tx, events.RestaurantAccepted, data.OrderID, data.RestaurantID, "")
@@ -112,9 +122,9 @@ func (h *Handlers) handleOrderCancelled(ctx context.Context, env events.Envelope
 		if err != nil {
 			return err
 		}
-		// Only release stock if it was actually reserved (order reached
-		// ACCEPTED or READY); a rejected order never touched stock.
-		if ro.Status == "ACCEPTED" || ro.Status == "READY" {
+		// Only release stock if it was actually reserved (accepted and
+		// beyond); a rejected order never touched stock.
+		if ro.Status == store.StatusAccepted || ro.Status == store.StatusPreparing || ro.Status == store.StatusReady {
 			var requested []domain.RequestedItem
 			for _, it := range ro.Items {
 				requested = append(requested, domain.RequestedItem{MenuItemID: it.MenuItemID, Quantity: it.Quantity})
@@ -123,7 +133,30 @@ func (h *Handlers) handleOrderCancelled(ctx context.Context, env events.Envelope
 				return err
 			}
 		}
-		return store.UpdateRestaurantOrderStatus(ctx, tx, data.OrderID, "CANCELLED", "")
+		return store.UpdateRestaurantOrderStatus(ctx, tx, data.OrderID, store.StatusCancelled, "")
+	})
+}
+
+// handleStatusChanged tracks the Order service's CONFIRMED -> PREPARING
+// step: that is the moment payment and acceptance are both in, so the
+// kitchen may start and the order may later be marked ready.
+func (h *Handlers) handleStatusChanged(ctx context.Context, env events.Envelope, data events.OrderStatusChangedData) error {
+	if data.To != events.StatusPreparing {
+		return nil
+	}
+	return h.Pool.WithTx(ctx, func(tx pgx.Tx) error {
+		isNew, err := db.InsertIfNew(ctx, tx, env.EventID, env.EventType)
+		if err != nil || !isNew {
+			return err
+		}
+		moved, err := store.MarkPreparing(ctx, tx, data.OrderID, env.Timestamp)
+		if err != nil {
+			return err
+		}
+		if !moved {
+			h.Log.Warn("PREPARING for an order not in ACCEPTED, ignoring", "orderId", data.OrderID)
+		}
+		return nil
 	})
 }
 

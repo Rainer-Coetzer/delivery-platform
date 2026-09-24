@@ -1,5 +1,5 @@
 // Package api exposes the Restaurant service's REST endpoints: managing
-// restaurants and menus, and marking an accepted order ready for pickup.
+// restaurants and menus, and marking a confirmed order ready for pickup.
 package api
 
 import (
@@ -10,13 +10,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
-	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
-	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
 	"github.com/rainercoetzer/delivery-platform/services/restaurant/internal/domain"
+	"github.com/rainercoetzer/delivery-platform/services/restaurant/internal/kitchen"
 	"github.com/rainercoetzer/delivery-platform/services/restaurant/internal/store"
 )
 
@@ -163,43 +161,20 @@ func (a *API) updateMenuItem(w http.ResponseWriter, r *http.Request) {
 }
 
 // markReady is called by restaurant staff once the kitchen has finished
-// preparing an accepted order. It emits restaurant.order-ready, which the
+// preparing a confirmed order. It emits restaurant.order-ready, which the
 // Order service uses to move to READY and the Delivery service uses to
 // assign a driver.
 func (a *API) markReady(w http.ResponseWriter, r *http.Request) {
-	orderID := chi.URLParam(r, "orderId")
-	ctx := r.Context()
-
-	err := a.Pool.WithTx(ctx, func(tx pgx.Tx) error {
-		ro, err := store.GetRestaurantOrderForUpdate(ctx, tx, orderID)
-		if err != nil {
-			return err
-		}
-		if ro.Status != "ACCEPTED" {
-			return errNotAcceptable
-		}
-		if err := store.UpdateRestaurantOrderStatus(ctx, tx, orderID, "READY", ""); err != nil {
-			return err
-		}
-		env, err := events.New(events.RestaurantReady, orderID, events.RestaurantReadyData{
-			OrderID: orderID, RestaurantID: ro.RestaurantID, Pickup: ro.Pickup, Dropoff: ro.Dropoff,
-		})
-		if err != nil {
-			return err
-		}
-		return outbox.Insert(ctx, tx, env)
-	})
+	err := kitchen.MarkReady(r.Context(), a.Pool, chi.URLParam(r, "orderId"))
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		httpx.NotFound(w, "order not found")
-	case errors.Is(err, errNotAcceptable):
-		httpx.Conflict(w, "order is not in an ACCEPTED state")
+	case errors.Is(err, kitchen.ErrNotPreparing):
+		httpx.Conflict(w, "order is not being prepared yet (waiting for payment or already ready)")
 	case err != nil:
 		a.Log.Error("mark ready", "error", err)
 		httpx.Internal(w, "could not mark order ready")
 	default:
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "READY"})
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": store.StatusReady})
 	}
 }
-
-var errNotAcceptable = errors.New("order not in acceptable state")

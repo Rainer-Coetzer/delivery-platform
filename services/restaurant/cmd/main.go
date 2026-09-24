@@ -13,14 +13,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 
+	"github.com/rainercoetzer/delivery-platform/pkg/config"
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
-	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
 	"github.com/rainercoetzer/delivery-platform/pkg/kafka"
 	"github.com/rainercoetzer/delivery-platform/pkg/obs"
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
 	"github.com/rainercoetzer/delivery-platform/services/restaurant/internal/api"
 	"github.com/rainercoetzer/delivery-platform/services/restaurant/internal/consumers"
+	"github.com/rainercoetzer/delivery-platform/services/restaurant/internal/kitchen"
 	"github.com/rainercoetzer/delivery-platform/services/restaurant/internal/migrations"
 	"github.com/rainercoetzer/delivery-platform/services/restaurant/internal/store"
 )
@@ -66,7 +67,7 @@ func main() {
 
 	consumer, err := kafka.NewConsumer(kafka.ConsumerConfig{
 		Brokers: brokers, GroupID: serviceName,
-		Topics: []string{events.OrderCreated, events.OrderCancelled},
+		Topics: consumers.Topics,
 		Log:    log, DLQ: dlqProducer,
 	})
 	if err != nil {
@@ -78,7 +79,23 @@ func main() {
 	handlers := &consumers.Handlers{Pool: pool, Log: log}
 	go consumer.Run(ctx, handlers.Handle)
 
-	a := &api.API{Pool: pool, Store: store.New(pool), Log: log}
+	st := store.New(pool)
+	autopilot, err := config.Bool("DEMO_AUTOPILOT", false)
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+	if autopilot {
+		prep, err := config.Duration("AUTOPILOT_PREP_TIME", 20*time.Second)
+		if err != nil {
+			log.Error("config", "error", err)
+			os.Exit(1)
+		}
+		log.Info("demo autopilot on: orders are marked ready automatically", "prepTime", prep)
+		go (&kitchen.Autopilot{Pool: pool, Store: st, Log: log, PrepTime: prep}).Run(ctx)
+	}
+
+	a := &api.API{Pool: pool, Store: st, Log: log}
 	router := chi.NewRouter()
 	router.Use(cors.Handler(cors.Options{AllowedOrigins: []string{"*"}, AllowedMethods: []string{"GET", "POST", "PATCH", "OPTIONS"}, AllowedHeaders: []string{"Authorization", "Content-Type"}}))
 	router.Use(httpx.RequestLogger(serviceName, log))

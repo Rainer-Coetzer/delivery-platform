@@ -238,3 +238,48 @@ func nullStr(s string) any {
 	}
 	return s
 }
+
+// Kitchen statuses for restaurant_orders. PREPARING is set when the Order
+// service confirms the order (see consumers.handleStatusChanged).
+const (
+	StatusPending   = "PENDING"
+	StatusAccepted  = "ACCEPTED"
+	StatusRejected  = "REJECTED"
+	StatusPreparing = "PREPARING"
+	StatusReady     = "READY"
+	StatusCancelled = "CANCELLED"
+)
+
+// MarkPreparing moves an ACCEPTED order to PREPARING. Any other current
+// status is left alone (e.g. already cancelled), and reported as false.
+func MarkPreparing(ctx context.Context, tx pgx.Tx, orderID string, since time.Time) (bool, error) {
+	ct, err := tx.Exec(ctx, `
+		UPDATE restaurant_orders SET status = 'PREPARING', preparing_since = $2, updated_at = now()
+		WHERE order_id = $1 AND status = 'ACCEPTED'`, orderID, since)
+	if err != nil {
+		return false, fmt.Errorf("mark order %s preparing: %w", orderID, err)
+	}
+	return ct.RowsAffected() == 1, nil
+}
+
+type PreparingOrder struct {
+	OrderID        string
+	PreparingSince time.Time
+}
+
+func (s *Store) ListPreparing(ctx context.Context) ([]PreparingOrder, error) {
+	rows, err := s.pool.Query(ctx, `SELECT order_id, preparing_since FROM restaurant_orders WHERE status = 'PREPARING' ORDER BY preparing_since`)
+	if err != nil {
+		return nil, fmt.Errorf("list preparing orders: %w", err)
+	}
+	defer rows.Close()
+	var out []PreparingOrder
+	for rows.Next() {
+		var p PreparingOrder
+		if err := rows.Scan(&p.OrderID, &p.PreparingSince); err != nil {
+			return nil, fmt.Errorf("scan preparing order: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
