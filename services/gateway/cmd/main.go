@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-chi/httprate"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/auth"
+	"github.com/rainercoetzer/delivery-platform/pkg/config"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
 	"github.com/rainercoetzer/delivery-platform/pkg/kafka"
@@ -33,12 +35,26 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	issuer := auth.NewIssuer(env("JWT_SECRET", "dev-secret-change-me"), 24*time.Hour)
+	secret, err := config.JWTSecret()
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+	origins, err := config.AllowedOrigins()
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+	log.Info("security config", "profile", config.Profile(), "allowedOrigins", origins)
+	issuer := auth.NewIssuer(secret, 24*time.Hour)
+	orderURL := env("ORDER_SERVICE_URL", "http://order-service:8083")
 
 	customerURL := env("CUSTOMER_SERVICE_URL", "http://customer-service:8081")
 	authAPI := api.NewAuthAPI(customerURL, issuer, log)
 
 	hub := ws.NewHub(log)
+	hub.OriginPatterns = originHosts(origins)
+	hub.Authorize = ws.NewOrderAccess(orderURL, issuer).Authorize
 	brokers := []string{env("KAFKA_BROKERS", "localhost:29092")}
 	bridge := &ws.Bridge{Hub: hub, Log: log}
 
@@ -63,7 +79,7 @@ func main() {
 
 	router := chi.NewRouter()
 	router.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{"*"}, AllowedMethods: []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+		AllowedOrigins: origins, AllowedMethods: []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders: []string{"Authorization", "Content-Type"},
 	}))
 	router.Use(httpx.RequestLogger(serviceName, log))
@@ -79,16 +95,19 @@ func main() {
 	router.Post("/auth/register", registerProxy.ServeHTTP)
 	router.Post("/auth/login", authAPI.Login)
 
-	// Live updates: /ws?orderId=<id>. No auth on the socket itself — the
-	// orderId is unguessable (a uuid), matching what the REST API already
-	// exposes to anyone with the order id.
+	// Live updates: /ws?orderId=<id>&token=<jwt>. The hub verifies the
+	// token and asks the order service whether this user may see the order.
 	router.Get("/ws", hub.ServeHTTP)
 
+	// The gateway verifies the token as an early reject and forwards the
+	// Authorization header unchanged; every service verifies it again and
+	// applies its own role and ownership rules (docs/adr/0001).
 	router.Group(func(r chi.Router) {
 		r.Use(issuer.Middleware)
-		mount(r, "/customers", env("CUSTOMER_SERVICE_URL", "http://customer-service:8081"))
+		mount(r, "/customers", customerURL)
+		mount(r, "/users", customerURL) // admin account onboarding
 		mount(r, "/restaurants", env("RESTAURANT_SERVICE_URL", "http://restaurant-service:8082"))
-		mount(r, "/orders", env("ORDER_SERVICE_URL", "http://order-service:8083"))
+		mount(r, "/orders", orderURL)
 		mount(r, "/payments", env("PAYMENT_SERVICE_URL", "http://payment-service:8084"))
 		mount(r, "/deliveries", env("DELIVERY_SERVICE_URL", "http://delivery-service:8085"))
 		mount(r, "/drivers", env("DELIVERY_SERVICE_URL", "http://delivery-service:8085"))
@@ -119,6 +138,23 @@ func mount(r chi.Router, prefix, target string) {
 	p, err := proxy.New(target)
 	must(err)
 	r.Mount(prefix, p)
+}
+
+// originHosts converts ALLOWED_ORIGINS entries (full origins like
+// "https://app.example.com") into the host patterns coder/websocket
+// compares against. Passing the full URL would silently match nothing.
+func originHosts(origins []string) []string {
+	hosts := make([]string, 0, len(origins))
+	for _, o := range origins {
+		if o == "*" {
+			hosts = append(hosts, "*")
+			continue
+		}
+		if u, err := url.Parse(o); err == nil && u.Host != "" {
+			hosts = append(hosts, u.Host)
+		}
+	}
+	return hosts
 }
 
 func must(err error) {
