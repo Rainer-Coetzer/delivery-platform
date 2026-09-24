@@ -1,15 +1,15 @@
-# Debug overlay: publishes every backend service on localhost so you can
-# call them directly (curl, go run against them). The default stack exposes
-# only the gateway, so the gateway's checks can't be skipped (audit P0-6).
-# Services still verify JWTs themselves, so this is safe on your machine,
-# but it's not something to run on a shared host.
+# Debug overlay (`full` profile): publishes every backend service on
+# localhost so you can call them directly. The default stack exposes only
+# the gateway, so its checks can't be skipped (audit P0-6). Services still
+# verify JWTs themselves, so this is safe on your machine, but it's not
+# something to run on a shared host.
 #
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.debug.yml up
+#   docker compose --profile full -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.debug.yml up
 services:
-  customer-service:     { ports: ["127.0.0.1:8081:8081"] }
-  restaurant-service:   { ports: ["127.0.0.1:8082:8082"] }
-  order-service:        { ports: ["127.0.0.1:8083:8083"] }
-  payment-service:      { ports: ["127.0.0.1:8084:8084"] }
-  delivery-service:     { ports: ["127.0.0.1:8085:8085"] }
-  notification-service: { ports: ["127.0.0.1:8086:8086"] }
-  admin-service:        { ports: ["127.0.0.1:8087:8087"] }
+  customer-service:     { ports: ["127.0.0.1:8081:8080"] }
+  restaurant-service:   { ports: ["127.0.0.1:8082:8080"] }
+  order-service:        { ports: ["127.0.0.1:8083:8080"] }
+  payment-service:      { ports: ["127.0.0.1:8084:8080"] }
+  delivery-service:     { ports: ["127.0.0.1:8085:8080"] }
+  notification-service: { ports: ["127.0.0.1:8086:8080"] }
+  admin-service:        { ports: ["127.0.0.1:8087:8080"] }

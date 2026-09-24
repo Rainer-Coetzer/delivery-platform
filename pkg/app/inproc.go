@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"strconv"
@@ -21,7 +22,18 @@ const InternalBaseURL = "http://platform.internal"
 type inprocTransport struct{ h http.Handler }
 
 func (t inprocTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	r := req.Clone(req.Context())
+	// A fresh context that keeps only cancellation. The caller's context is
+	// usually a handler's, carrying chi's routing state (chi then treats this
+	// call as a sub-router hop and routes the outer request's leftover path:
+	// a 404 that looks like "restaurant not found") and the caller's auth
+	// claims. Neither may leak into the callee, which must authenticate the
+	// forwarded token itself.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stop := context.AfterFunc(req.Context(), cancel)
+	defer stop()
+
+	r := req.Clone(ctx)
 	if r.Body == nil {
 		r.Body = http.NoBody
 	}

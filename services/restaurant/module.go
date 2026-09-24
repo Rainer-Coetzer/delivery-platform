@@ -5,6 +5,12 @@ package restaurant
 import (
 	"fmt"
 	"time"
+	// Embeds the IANA tz database. Opening hours are judged in each
+	// restaurant's timezone (domain.OpenAtTime), and the Alpine runtime image
+	// ships no tz data. It lives here, in the module, not in a main package:
+	// that way every binary that includes this module (the service or
+	// cmd/platform) gets it, and it can't be lost when a main is rewritten.
+	_ "time/tzdata"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/app"
 	"github.com/rainercoetzer/delivery-platform/pkg/config"

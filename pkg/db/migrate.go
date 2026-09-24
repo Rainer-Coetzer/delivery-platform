@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io/fs"
+	"regexp"
 
 	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver for goose
@@ -33,11 +34,17 @@ func Migrate(dsn string, fsys fs.FS, dir string) error {
 // safe: a second replica waits for the first to finish instead of racing it
 // on the same DDL.
 func MigrateSchema(ctx context.Context, dsn, schema string, fsys fs.FS) error {
-	if schema == "" {
-		return fmt.Errorf("MigrateSchema: empty schema name")
+	if !validSchema.MatchString(schema) {
+		return fmt.Errorf("MigrateSchema: schema %q must be lowercase letters, digits and _ (no quoting needed)", schema)
 	}
 	return migrate(ctx, dsn, schema, fsys)
 }
+
+// validSchema keeps schema names to identifiers that never need quoting.
+// That matters for goose: it compares its version-table name literally, so
+// a quoted name ("bus"."goose_db_version") was never found on the second
+// boot and goose tried to create it again.
+var validSchema = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
 
 func migrate(ctx context.Context, dsn, schema string, fsys fs.FS) error {
 	if schema != "" {
@@ -60,7 +67,7 @@ func migrate(ctx context.Context, dsn, schema string, fsys fs.FS) error {
 	table := "goose_db_version"
 	lockName := "public"
 	if schema != "" {
-		table = pgx.Identifier{schema, "goose_db_version"}.Sanitize()
+		table = schema + ".goose_db_version" // unquoted: see validSchema
 		lockName = schema
 	}
 	locker, err := lock.NewPostgresSessionLocker(lock.WithLockID(lockID("migrate:" + lockName)))

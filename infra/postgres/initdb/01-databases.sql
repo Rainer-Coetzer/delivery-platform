@@ -14,6 +14,13 @@
 -- migrates. The delivery migration's CREATE EXTENSION IF NOT EXISTS then
 -- finds it and needs no privilege.
 
+-- pilot profile: one database for the whole platform binary, one schema
+-- per module inside it (ADR-0002). The platform role owns the database, so
+-- it can create those schemas itself at boot.
+CREATE ROLE platform     LOGIN PASSWORD 'platform';
+CREATE DATABASE platform OWNER platform;
+
+-- full profile: one role and database per microservice.
 CREATE ROLE customer     LOGIN PASSWORD 'customer';
 CREATE ROLE restaurant   LOGIN PASSWORD 'restaurant';
 CREATE ROLE "order"      LOGIN PASSWORD 'order';
@@ -31,4 +38,10 @@ CREATE DATABASE notification_db OWNER notification;
 CREATE DATABASE admin_db        OWNER admin;
 
 \connect delivery_db
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- In the platform database PostGIS lives in public; every module's
+-- search_path is "<module>, public" (pkg/db.OpenSchema), so the delivery
+-- module still finds the geography type.
+\connect platform
 CREATE EXTENSION IF NOT EXISTS postgis;

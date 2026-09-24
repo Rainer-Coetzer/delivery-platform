@@ -50,3 +50,40 @@ func TestInprocClient_RunsCalleeAuthAsTheUser(t *testing.T) {
 		t.Fatalf("admin: %d %q user=%q", resp.StatusCode, body, resp.Header.Get("X-Seen-User"))
 	}
 }
+
+// Regression: a call made from inside a chi handler (whose context carries
+// chi's routing state and the caller's claims) must be routed from scratch,
+// and must not see the caller's claims.
+func TestInprocClient_FromInsideAHandler(t *testing.T) {
+	r := chi.NewRouter()
+	client := NewInprocClient(r)
+	r.Get("/restaurants/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if _, leaked := auth.FromContext(r.Context()); leaked {
+			http.Error(w, "caller claims leaked into callee", 500)
+			return
+		}
+		_, _ = w.Write([]byte("restaurant " + chi.URLParam(r, "id")))
+	})
+	r.Post("/orders", func(w http.ResponseWriter, r *http.Request) {
+		ctx := auth.WithClaims(r.Context(), &auth.Claims{UserID: "caller"})
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, InternalBaseURL+"/restaurants/r1", nil)
+		resp, err := client.Do(req)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		body, _ := io.ReadAll(resp.Body)
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(body)
+	})
+
+	req, _ := http.NewRequest(http.MethodPost, InternalBaseURL+"/orders", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || string(body) != "restaurant r1" {
+		t.Fatalf("nested call: %d %q", resp.StatusCode, body)
+	}
+}

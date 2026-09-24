@@ -57,8 +57,12 @@ func OpenSchema(ctx context.Context, dsn, schema string, maxConns int32) (*Pool,
 	return &Pool{pool}, nil
 }
 
+// searchPath is "<schema>,public" with no space on purpose. withSearchPath
+// puts it in a DSN query string, where url.Values encodes a space as "+",
+// and pgx does not decode "+" back into a space. The result was a second
+// schema literally named "+public", so PostGIS types in public vanished.
 func searchPath(schema string) string {
-	return pgx.Identifier{schema}.Sanitize() + ", public"
+	return pgx.Identifier{schema}.Sanitize() + ",public"
 }
 
 // withSearchPath adds search_path to a DSN for database/sql users (goose).

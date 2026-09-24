@@ -1,22 +1,30 @@
-# Dev overlay: turns on the demo autopilot so an order completes with nobody
-# pressing buttons, and speeds up the simulated drivers.
+# Dev overlay: turns on the demo autopilot so a job completes with nobody
+# pressing buttons, speeds up the simulated drivers, and bootstraps a dev
+# admin. Works with either profile:
 #
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#   docker compose --profile pilot -f docker-compose.yml -f docker-compose.dev.yml up --build
 #
 # Never use this outside local development: autopilot marks food ready and
-# delivered on a timer.
+# delivered on a timer, and the admin password below is public.
+x-dev-autopilot: &dev-autopilot
+  DEMO_AUTOPILOT: "true"
+  AUTOPILOT_PREP_TIME: 5s  # a real kitchen is minutes; this keeps the demo short
+  SIM_STEP_METERS: "300"   # ~150 m/s: absurd for a bike, right for a 1-minute demo
+
+x-dev-admin: &dev-admin
+  BOOTSTRAP_ADMIN_EMAIL: admin@example.com
+  BOOTSTRAP_ADMIN_PASSWORD: admin-dev-password
+
 services:
+  platform:
+    environment:
+      <<: [*dev-autopilot, *dev-admin]
   customer-service:
     environment:
-      # Dev-only first admin; seed.sh logs in as this account. Outside dev,
-      # set BOOTSTRAP_ADMIN_* yourself (12+ char password) or not at all.
-      BOOTSTRAP_ADMIN_EMAIL: admin@example.com
-      BOOTSTRAP_ADMIN_PASSWORD: admin-dev-password
+      <<: *dev-admin
   restaurant-service:
     environment:
-      DEMO_AUTOPILOT: "true"
-      AUTOPILOT_PREP_TIME: 5s # a real kitchen is minutes; this keeps the demo short
+      <<: *dev-autopilot
   delivery-service:
     environment:
-      DEMO_AUTOPILOT: "true"
-      SIM_STEP_METERS: "300" # ~150 m/s: absurd for a bike, right for a 1-minute demo
+      <<: *dev-autopilot

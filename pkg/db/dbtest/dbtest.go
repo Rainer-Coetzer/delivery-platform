@@ -77,8 +77,12 @@ func NewDSN(t *testing.T, migrations fs.FS) (*db.Pool, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Migrate(dsn, migrations, "."); err != nil {
-		t.Fatalf("migrate %s: %v", name, err)
+	// An empty FS means "just give me a database" (e.g. to test migrations
+	// themselves); goose would otherwise refuse with "no migrations found".
+	if files, _ := fs.Glob(migrations, "*.sql"); len(files) > 0 {
+		if err := db.Migrate(dsn, migrations, "."); err != nil {
+			t.Fatalf("migrate %s: %v", name, err)
+		}
 	}
 	pool, err := db.Open(ctx, dsn)
 	if err != nil {

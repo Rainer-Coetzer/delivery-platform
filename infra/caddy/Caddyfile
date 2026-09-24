@@ -1,0 +1,8 @@
+# Caddy is the only thing exposed on a client VPS. SITE_ADDRESS is the
+# client's domain (e.g. delivery.example.com), and Caddy then gets and renews
+# the HTTPS certificate on its own. Locally it defaults to plain HTTP on :80.
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+	# Streams (WebSocket upgrades) pass through reverse_proxy unchanged.
+	reverse_proxy platform:8080
+}

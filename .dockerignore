@@ -1,0 +1,5 @@
+bin/
+apps/
+docs/
+.git/
+**/build/
