@@ -14,8 +14,8 @@ package dbtest
 
 import (
 	"context"
-	"embed"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"strings"
@@ -31,7 +31,15 @@ import (
 // New creates a uniquely named database, runs the service's migrations
 // against it and returns an open pool. Must be called from a test built
 // with the integration tag.
-func New(t *testing.T, migrations embed.FS) *db.Pool {
+func New(t *testing.T, migrations fs.FS) *db.Pool {
+	t.Helper()
+	pool, _ := NewDSN(t, migrations)
+	return pool
+}
+
+// NewDSN is New that also returns the new database's DSN, for components
+// that open their own connections (the in-process bus).
+func NewDSN(t *testing.T, migrations fs.FS) (*db.Pool, string) {
 	t.Helper()
 	adminURL := os.Getenv("TEST_DATABASE_URL")
 	if adminURL == "" {
@@ -77,7 +85,7 @@ func New(t *testing.T, migrations embed.FS) *db.Pool {
 		t.Fatalf("open %s: %v", name, err)
 	}
 	t.Cleanup(pool.Close)
-	return pool
+	return pool, dsn
 }
 
 func withDatabase(dsn, name string) (string, error) {

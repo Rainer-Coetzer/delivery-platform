@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -26,14 +27,50 @@ type Queryer interface {
 }
 
 func Open(ctx context.Context, dsn string) (*Pool, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	return OpenSchema(ctx, dsn, "", 0)
+}
+
+// OpenSchema opens a pool whose connections use search_path=<schema>,public,
+// so a module's unqualified SQL reads and writes its own schema (ADR-0002).
+// maxConns > 0 caps the pool: in the platform binary every module has its
+// own pool against one Postgres, and small caps keep the total well under
+// max_connections and stop one busy module from starving the rest.
+func OpenSchema(ctx context.Context, dsn, schema string, maxConns int32) (*Pool, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open pool: %w", err)
+		return nil, fmt.Errorf("parse DATABASE_URL: %w", err)
+	}
+	if schema != "" {
+		cfg.ConnConfig.RuntimeParams["search_path"] = searchPath(schema)
+	}
+	if maxConns > 0 {
+		cfg.MaxConns = maxConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open pool (schema %q): %w", schema, err)
 	}
 	if err := pool.Ping(ctx); err != nil {
-		return nil, fmt.Errorf("ping: %w", err)
+		pool.Close()
+		return nil, fmt.Errorf("ping (schema %q): %w", schema, err)
 	}
 	return &Pool{pool}, nil
+}
+
+func searchPath(schema string) string {
+	return pgx.Identifier{schema}.Sanitize() + ", public"
+}
+
+// withSearchPath adds search_path to a DSN for database/sql users (goose).
+func withSearchPath(dsn, schema string) (string, error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", fmt.Errorf("parse DATABASE_URL: %w", err)
+	}
+	q := u.Query()
+	q.Set("search_path", searchPath(schema))
+	u.RawQuery = q.Encode()
+	return u.String(), nil
 }
 
 // WithTx runs fn inside a transaction, committing on success and rolling

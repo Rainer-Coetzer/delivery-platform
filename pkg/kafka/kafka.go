@@ -13,6 +13,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/events/bus"
 	"github.com/rainercoetzer/delivery-platform/pkg/obs"
 )
 
@@ -49,29 +50,28 @@ func (p *Producer) Publish(ctx context.Context, topic, key string, value []byte)
 
 func (p *Producer) Close() { p.client.Close() }
 
-// Handler processes one event. Returning an error causes a retry (up to
-// MaxRetries) and then the event is sent to the dead-letter topic.
-type Handler func(ctx context.Context, env events.Envelope) error
+// Handler processes one event; error semantics are bus.Handler's (retry,
+// then dead-letter; bus.Permanent skips the retries).
+type Handler = bus.Handler
 
 // Consumer subscribes to a fixed set of topics under one consumer group and
 // dispatches each record to Handler, retrying transient failures and
 // dead-lettering the rest.
 type Consumer struct {
-	client     *kgo.Client
-	log        *slog.Logger
-	dlq        *Producer
-	service    string
-	maxRetries int
-	retryDelay time.Duration
+	client  *kgo.Client
+	log     *slog.Logger
+	dlq     *Producer
+	service string
+	retry   bus.RetryPolicy
 }
 
 type ConsumerConfig struct {
-	Brokers    []string
-	GroupID    string
-	Topics     []string
-	Log        *slog.Logger
-	DLQ        *Producer // publishes failed events to "<topic>.dlq"; may be nil to disable
-	MaxRetries int       // default 3
+	Brokers []string
+	GroupID string
+	Topics  []string
+	Log     *slog.Logger
+	DLQ     *Producer       // publishes failed events to "<topic>.dlq"; may be nil to disable
+	Retry   bus.RetryPolicy // default bus.DefaultRetry
 	// Service labels the kafka_events_consumed_total metric; defaults to
 	// GroupID (which is already the service name by this project's
 	// convention — see every service's cmd/main.go).
@@ -79,8 +79,8 @@ type ConsumerConfig struct {
 }
 
 func NewConsumer(cfg ConsumerConfig) (*Consumer, error) {
-	if cfg.MaxRetries == 0 {
-		cfg.MaxRetries = 3
+	if cfg.Retry.Attempts == 0 {
+		cfg.Retry = bus.DefaultRetry
 	}
 	if cfg.Service == "" {
 		cfg.Service = cfg.GroupID
@@ -95,14 +95,14 @@ func NewConsumer(cfg ConsumerConfig) (*Consumer, error) {
 		return nil, fmt.Errorf("new kafka consumer: %w", err)
 	}
 	return &Consumer{
-		client: client, log: cfg.Log, dlq: cfg.DLQ, service: cfg.Service,
-		maxRetries: cfg.MaxRetries, retryDelay: 200 * time.Millisecond,
+		client: client, log: cfg.Log, dlq: cfg.DLQ, service: cfg.Service, retry: cfg.Retry,
 	}, nil
 }
 
 // Run polls until ctx is cancelled, dispatching every record to handle.
-// Commits offsets after each record is handled (successfully or
-// dead-lettered) so a crash never silently skips a message.
+// Offsets are committed once per poll batch, after every record in it is
+// handled or dead-lettered; a crash before that means the batch is
+// redelivered (at-least-once, consumers dedupe via processed_events).
 func (c *Consumer) Run(ctx context.Context, handle Handler) {
 	for {
 		if ctx.Err() != nil {
@@ -116,8 +116,15 @@ func (c *Consumer) Run(ctx context.Context, handle Handler) {
 			c.log.Error("fetch error", "topic", topic, "partition", partition, "error", err)
 		})
 		fetches.EachRecord(func(rec *kgo.Record) {
-			c.process(ctx, rec, handle)
+			if ctx.Err() == nil {
+				c.process(ctx, rec, handle)
+			}
 		})
+		// A consumer stopped mid-batch must not commit: records it never
+		// finished would be marked done and lost.
+		if ctx.Err() != nil {
+			return
+		}
 		if err := c.client.CommitUncommittedOffsets(ctx); err != nil {
 			c.log.Error("commit offsets failed", "error", err)
 		}
@@ -131,35 +138,38 @@ func (c *Consumer) process(ctx context.Context, rec *kgo.Record, handle Handler)
 		c.deadLetter(ctx, rec, "decode error: "+err.Error())
 		return
 	}
-
-	var lastErr error
-	for attempt := 1; attempt <= c.maxRetries; attempt++ {
-		lastErr = handle(ctx, env)
-		if lastErr == nil {
-			obs.KafkaEventsConsumedTotal.WithLabelValues(c.service, rec.Topic, "success").Inc()
-			return
-		}
-		c.log.Warn("handler failed, retrying",
-			"topic", rec.Topic, "eventId", env.EventID, "attempt", attempt, "error", lastErr)
-		select {
-		case <-time.After(c.retryDelay * time.Duration(attempt)):
-		case <-ctx.Done():
-			return
-		}
+	err, dead := bus.Deliver(ctx, c.retry, bus.Handler(handle), env)
+	switch {
+	case err == nil:
+		obs.KafkaEventsConsumedTotal.WithLabelValues(c.service, rec.Topic, "success").Inc()
+	case dead:
+		c.log.Error("handler failed, dead-lettering", "topic", rec.Topic, "eventId", env.EventID, "error", err)
+		obs.KafkaEventsConsumedTotal.WithLabelValues(c.service, rec.Topic, "dead_lettered").Inc()
+		c.deadLetter(ctx, rec, err.Error())
 	}
-	c.log.Error("handler exhausted retries, dead-lettering",
-		"topic", rec.Topic, "eventId", env.EventID, "error", lastErr)
-	obs.KafkaEventsConsumedTotal.WithLabelValues(c.service, rec.Topic, "dead_lettered").Inc()
-	c.deadLetter(ctx, rec, lastErr.Error())
+	// Otherwise ctx was cancelled mid-retry: Run returns without committing.
 }
 
+// deadLetter publishes rec to "<topic>.dlq", retrying until it succeeds or
+// the consumer stops. It used to log and move on, and the commit that
+// followed then lost the event (audit P1). Blocking the partition is the
+// lesser evil: it's loud in the logs and nothing is lost.
 func (c *Consumer) deadLetter(ctx context.Context, rec *kgo.Record, reason string) {
 	if c.dlq == nil {
+		c.log.Error("no DLQ producer configured; event dropped", "topic", rec.Topic, "reason", reason)
 		return
 	}
 	topic := rec.Topic + ".dlq"
-	if err := c.dlq.Publish(ctx, topic, string(rec.Key), rec.Value); err != nil {
-		c.log.Error("failed to publish to DLQ", "topic", topic, "reason", reason, "error", err)
+	for attempt := 1; ctx.Err() == nil; attempt++ {
+		err := c.dlq.Publish(ctx, topic, string(rec.Key), rec.Value)
+		if err == nil {
+			return
+		}
+		c.log.Error("DLQ publish failed, retrying (partition blocked until it succeeds)", "topic", topic, "attempt", attempt, "reason", reason, "error", err)
+		select {
+		case <-time.After(time.Second):
+		case <-ctx.Done():
+		}
 	}
 }
 
