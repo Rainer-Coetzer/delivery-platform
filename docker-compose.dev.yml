@@ -1,0 +1,16 @@
+# Dev overlay: turns on the demo autopilot so an order completes with nobody
+# pressing buttons, and speeds up the simulated drivers.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# Never use this outside local development: autopilot marks food ready and
+# delivered on a timer.
+services:
+  restaurant-service:
+    environment:
+      DEMO_AUTOPILOT: "true"
+      AUTOPILOT_PREP_TIME: 5s # a real kitchen is minutes; this keeps the demo short
+  delivery-service:
+    environment:
+      DEMO_AUTOPILOT: "true"
+      SIM_STEP_METERS: "300" # ~150 m/s: absurd for a bike, right for a 1-minute demo
