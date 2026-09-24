@@ -1,5 +1,4 @@
-// Package api exposes the Order service's REST endpoints, per
-// docs/API-CONTRACT.md.
+// Package api exposes the Order service's REST endpoints.
 package api
 
 import (
@@ -49,7 +48,7 @@ type createOrderRequest struct {
 // createOrder computes pricing (including the surge multiplier), persists
 // the order and its outbox row in one transaction, and returns 201. The
 // outbox relay publishes orders.created shortly after; restaurant and
-// payment then race to confirm it, per docs/EVENTS.md.
+// payment then race to confirm it (topics in pkg/events).
 func (a *API) createOrder(w http.ResponseWriter, r *http.Request) {
 	var req createOrderRequest
 	if err := httpx.Decode(r, &req); err != nil {

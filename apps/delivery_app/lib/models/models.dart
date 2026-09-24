@@ -1,6 +1,6 @@
 // Plain, hand-written models with fromJson/toJson matching the JSON shapes
-// each backend service returns (see docs/API-CONTRACT.md). No codegen, so
-// `flutter pub get` is the only step needed before running the app.
+// each backend service returns (see each service's internal/api package).
+// No codegen, so `flutter pub get` is the only step needed before running the app.
 
 class LatLng2 {
   final double lat;

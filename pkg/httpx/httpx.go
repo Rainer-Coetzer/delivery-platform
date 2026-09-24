@@ -15,7 +15,7 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/obs"
 )
 
-// APIError is the one error shape every service returns, per API-CONTRACT.md.
+// APIError is the one error shape every service returns.
 type APIError struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`

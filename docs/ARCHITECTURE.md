@@ -2,7 +2,9 @@
 
 A food delivery platform: Go microservices,
 Kafka, PostgreSQL/PostGIS, a Flutter client, all in Docker Compose. See
-[../README.md](../README.md) for how to run it.
+[../README.md](../README.md) for how to run it, [AUDIT.md](AUDIT.md) for
+known gaps and the improvement plan, and [TESTING.md](TESTING.md) for how
+each part is tested.
 
 ## Services
 

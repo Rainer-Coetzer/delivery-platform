@@ -52,7 +52,7 @@ func (h *Hub) Broadcast(room string, msg []byte) {
 }
 
 // ServeHTTP upgrades the connection and joins it to the room named by the
-// "orderId" query parameter, per docs/API-CONTRACT.md.
+// "orderId" query parameter.
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	room := r.URL.Query().Get("orderId")
 	if room == "" {

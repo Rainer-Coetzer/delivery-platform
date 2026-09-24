@@ -44,7 +44,7 @@ type Item struct {
 
 // Order is returned directly by the REST API (see internal/api), so its
 // json tags are the API contract's response shape — camelCase, matching
-// pkg/events and docs/API-CONTRACT.md.
+// pkg/events.
 type Order struct {
 	ID                 string          `json:"id"`
 	CustomerID         string          `json:"customerId"`
