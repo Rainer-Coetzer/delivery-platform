@@ -1,0 +1,5 @@
+# Force LF everywhere: shell scripts are mounted into Linux containers and
+# a CRLF checkout (core.autocrlf on Windows) makes /bin/sh choke on them.
+* text=auto eol=lf
+*.png binary
+*.jpg binary

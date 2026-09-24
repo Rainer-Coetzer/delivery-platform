@@ -1,11 +1,12 @@
 #!/bin/sh
 # Creates every topic this project uses, 3 partitions each, keyed by orderId
-# (or driverId for delivery.location) — see docs/EVENTS.md. Run once against
+# (or driverId for delivery.location) — see pkg/events/events.go. Run once against
 # a broker that is already up; safe to re-run since --if-not-exists no-ops
 # on topics that already exist. Also creates the .dlq topic for each one.
 set -e
 
 BROKER="${KAFKA_BROKER:-kafka:9092}"
+KAFKA_BIN="${KAFKA_BIN:-/opt/kafka/bin}"
 PARTITIONS="${TOPIC_PARTITIONS:-3}"
 REPLICATION="${TOPIC_REPLICATION:-1}"
 
@@ -30,11 +31,11 @@ notifications.created
 
 for topic in $TOPICS; do
   echo "creating topic: $topic"
-  kafka-topics.sh --bootstrap-server "$BROKER" --create --if-not-exists \
+  "$KAFKA_BIN/kafka-topics.sh" --bootstrap-server "$BROKER" --create --if-not-exists \
     --topic "$topic" --partitions "$PARTITIONS" --replication-factor "$REPLICATION"
-  kafka-topics.sh --bootstrap-server "$BROKER" --create --if-not-exists \
+  "$KAFKA_BIN/kafka-topics.sh" --bootstrap-server "$BROKER" --create --if-not-exists \
     --topic "${topic}.dlq" --partitions 1 --replication-factor "$REPLICATION"
 done
 
 echo "all topics created"
-kafka-topics.sh --bootstrap-server "$BROKER" --list
+"$KAFKA_BIN/kafka-topics.sh" --bootstrap-server "$BROKER" --list
