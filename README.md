@@ -59,6 +59,35 @@ Useful UIs while it's running:
 Run the Flutter client: see [apps/delivery_app/README.md](apps/delivery_app/README.md)
 for first-time platform setup (`flutter create`).
 
+## Security model
+
+- **The gateway is the only public port.** Backends have no host ports. The
+  debug overlay `docker-compose.debug.yml` publishes them on `127.0.0.1`.
+- **Every service verifies the JWT itself** and checks roles and ownership
+  per route ([ADR-0001](docs/adr/0001-identity-propagation.md)). Identity
+  never comes from request bodies.
+- **Accounts.** Public sign-up creates customers only. An admin onboards
+  restaurants and drivers: they create the restaurant or driver, then its
+  login with `POST /users` (`refId` links the two). The first admin comes
+  from `BOOTSTRAP_ADMIN_EMAIL`/`BOOTSTRAP_ADMIN_PASSWORD`.
+- **Prices are computed on the server** from the restaurant's catalogue. The
+  restaurant re-checks item ownership and price on acceptance.
+- **Live tracking** (`/ws?orderId=...&token=...`) is only for the order's
+  customer, restaurant, assigned driver or an admin.
+- **Fail fast.** With any `PROFILE` other than `dev`, services refuse to boot
+  if `JWT_SECRET` is missing, short or a placeholder, or if `ALLOWED_ORIGINS`
+  is empty or has wildcards. The code default is *not* dev, so forgetting
+  `PROFILE` lands on the strict side. See `.env.example`.
+
+Demo logins after `./infra/seed/seed.sh` (all use `password123`, dev only):
+
+| Role | Email |
+|---|---|
+| admin | `admin@example.com` (password `admin-dev-password`, from the dev overlay) |
+| customer | `nangula@example.com` |
+| restaurant | `owner+alldaykitchen@example.com` (and one per seeded restaurant) |
+| driver | `driver+johannesshikongo@example.com` (and one per seeded driver) |
+
 ## Development
 
 ```bash

@@ -73,6 +73,15 @@ from the code.
   (`services/delivery/internal/sim.PendingAssignmentRetrier`) instead of
   dropping it.
 
+## Security
+
+Every service verifies the caller's JWT and enforces roles and ownership on
+each route. The gateway checks too, as an early reject, and is the only
+published port. Why services verify tokens themselves rather than trusting
+a gateway header: [adr/0001](adr/0001-identity-propagation.md). The order
+service prices orders from the restaurant's catalogue (called as the user),
+and the restaurant re-validates items and prices on acceptance.
+
 ## Notable design choices
 
 - **Nearest-driver assignment** uses PostGIS's `<->` KNN operator against a

@@ -33,6 +33,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      # First boot creates PostGIS in three databases before the real server
+      # starts listening on TCP; that took over a minute here. Failures in
+      # this window don't count towards retries.
+      start_period: 120s
 
   # Official Apache image, single-node KRaft (no ZooKeeper). Replaced
   # bitnami/kafka:3.7, whose versioned tags were pulled from Docker Hub in
@@ -105,6 +109,8 @@ services:
       <<: *service-env
       DATABASE_URL: postgres://customer:customer@postgres:5432/customer_db?sslmode=disable
       PORT: "8081"
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
