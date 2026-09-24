@@ -151,3 +151,40 @@ I re-checked every item against commit `966164b`. This time `go list` ran, so th
 **Dangling doc references (P1 docs) confirmed:** `docs/API-CONTRACT.md` (models.dart, httpx.go, hub.go, order api.go, order domain.go), `docs/EVENTS.md` (topics.sh, order api.go), `docs/SETUP.md` (compose).
 
 **Re-ranked Phase 1 scope:** P0-1 (Go 1.26), **P0-11 (Kafka image)**, P0-2 (autopilot), P0-10 (delivery consumes `orders.cancelled`), P0-8 (Flutter smoke test). The priority score is (Impact + Risk) × (6 − Effort). Everything else keeps the order the audit gave it.
+
+---
+
+## Status after Phases 1 and 2 (24 September 2026)
+
+**All P0 items are fixed**, verified by `scripts/e2e.sh` against a clean `docker compose` stack. The run included 6 security smoke checks, and the order went CREATED → DELIVERED in 28s.
+
+| # | Fix |
+|---|---|
+| P0-1 | Go 1.26 everywhere |
+| P0-2 | `DEMO_AUTOPILOT` (restaurant + delivery), `docker-compose.dev.yml`, Go-based seed/e2e |
+| P0-3 | Public signup is customer-only. Admin onboarding via `POST /users`. Bootstrap admin from env |
+| P0-4 | Order prices from the restaurant catalogue. Restaurant re-checks ownership and price (`CheckItems`) |
+| P0-5 | JWT verified in every service (ADR-0001). Route-role matrices and ownership checks everywhere |
+| P0-6 | Only the gateway is published. `docker-compose.debug.yml` for local backend ports |
+| P0-7 | Fail-fast `JWT_SECRET`/`ALLOWED_ORIGINS` outside dev. Authenticated WebSocket. No SUPERUSER. Grafana Viewer |
+| P0-8 | Flutter smoke test (the app also had a compile error, now fixed) |
+| P0-9 | Restaurant IANA timezone, embedded tzdata |
+| P0-10 | Delivery consumes `orders.cancelled` (tombstone + advisory lock) |
+| P0-11 | `apache/kafka:3.9.1` |
+
+**P1 items fixed along the way:** READY racing ahead of payment (mark-ready now needs PREPARING), unknown restaurant rejected, `durationSeconds` set, simulator N+1, and the dangling doc references.
+
+**Found and fixed during the stack runs:**
+- `init.sql` used `CREATE DATABASE` inside `DO`, so first boot never worked.
+- The Postgres healthcheck passed mid-init.
+- First-boot checkpoint timeouts on slow volumes.
+- Backend CORS headers duplicated the gateway's.
+- Driver BUSY → AVAILABLE toggling.
+- Unescaped ids in internal URLs.
+- Unvalidated menu PATCH and order dropoff.
+
+**Still open and scheduled:**
+- A misconfigured service still runs its migrations before failing its config check (Phase 3, `pkg/app` validates first).
+- Login brute-force is limited only by the gateway's 100 requests/min/IP (Phase 7).
+- Tokens live 24h with no revocation (ADR-0001 "revisit").
+- Surge pricing, float money and the `order:` recipients (Phase 4).
