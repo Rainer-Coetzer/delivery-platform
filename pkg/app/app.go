@@ -103,12 +103,13 @@ type Options struct {
 }
 
 // defaultServiceURLs are where each module lives in the `full` (microservice)
-// compose profile. Override with <NAME>_SERVICE_URL.
+// compose profile, where every service listens on 8080 in its own
+// container. Override with <NAME>_SERVICE_URL.
 var defaultServiceURLs = map[string]string{
-	"customer": "http://customer-service:8081", "restaurant": "http://restaurant-service:8082",
-	"order": "http://order-service:8083", "payment": "http://payment-service:8084",
-	"delivery": "http://delivery-service:8085", "notification": "http://notification-service:8086",
-	"admin": "http://admin-service:8087",
+	"customer": "http://customer-service:8080", "restaurant": "http://restaurant-service:8080",
+	"order": "http://order-service:8080", "payment": "http://payment-service:8080",
+	"delivery": "http://delivery-service:8080", "notification": "http://notification-service:8080",
+	"admin": "http://admin-service:8080",
 }
 
 // Run starts the modules and blocks until SIGINT/SIGTERM. Any startup error
@@ -179,6 +180,11 @@ func run(log *slog.Logger, opts Options) error {
 		}
 	}()
 	edge := func(h http.Handler) http.Handler { return h }
+	// Deferred last, so it runs first: stop relays and workers before the
+	// pools and the bus they use are closed (the error path doesn't get
+	// SIGTERM's cancellation for free).
+	ctx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 
 	for _, def := range opts.Definitions {
 		deps := Deps{Log: log.With("module", def.Name), Bus: b, Issuer: issuer, Auth: issuer.Middleware, HTTP: httpClient, URL: urlFor, Embedded: opts.Embedded}

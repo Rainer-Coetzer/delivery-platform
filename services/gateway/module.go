@@ -62,6 +62,7 @@ func newModule(d app.Deps) (*app.Module, error) {
 	}
 
 	edge := func(h http.Handler) http.Handler {
+		h = blockInternal(h)
 		h = httprate.LimitByIP(100, time.Minute)(h)
 		return cors.Handler(cors.Options{
 			AllowedOrigins: origins, AllowedMethods: []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
@@ -78,6 +79,24 @@ func newModule(d app.Deps) (*app.Module, error) {
 			Handler: bridge.Handle,
 		}},
 	}, nil
+}
+
+// internalOnly are routes other modules call in-process but the internet
+// must not reach. In the platform binary every module shares the router
+// Caddy exposes, so without this /auth/verify (the credential check behind
+// login) would be public. In-process calls never pass through the edge, so
+// they're unaffected. Between microservices these paths simply aren't
+// proxied.
+var internalOnly = map[string]bool{"/auth/verify": true}
+
+func blockInternal(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if internalOnly[r.URL.Path] {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // proxiedPrefixes: which module owns each public path prefix.

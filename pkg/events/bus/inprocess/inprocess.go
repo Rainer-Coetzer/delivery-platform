@@ -49,8 +49,11 @@ type Config struct {
 	// deployment. 3 matches the Kafka topics.
 	Partitions int
 	Retry      bus.RetryPolicy
-	// PollInterval is the fallback when a NOTIFY is missed (a reconnect,
-	// say). Wakeups normally come from NOTIFY within milliseconds.
+	// PollInterval is the fallback when a NOTIFY is missed (the listener
+	// reconnecting, say). Wakeups normally come from NOTIFY within
+	// milliseconds, so this only bounds latency in that rare case. Keep it
+	// long: every dispatcher (groups x partitions, ~24 today) polls at this
+	// rate, and at 2s that was ~4% idle CPU on Postgres for nothing.
 	PollInterval time.Duration
 	BatchSize    int
 	Log          *slog.Logger
@@ -80,7 +83,7 @@ func New(ctx context.Context, cfg Config) (*Bus, error) {
 		cfg.Retry = bus.DefaultRetry
 	}
 	if cfg.PollInterval == 0 {
-		cfg.PollInterval = 2 * time.Second
+		cfg.PollInterval = 30 * time.Second
 	}
 	if cfg.BatchSize == 0 {
 		cfg.BatchSize = 100
@@ -282,14 +285,34 @@ func (d *dispatcher) lockKey() int64 {
 
 func (d *dispatcher) run(ctx context.Context) {
 	log := d.bus.cfg.Log.With("group", d.group, "partition", d.partition)
+	// Retry ownership every few seconds: another replica may own this
+	// partition (it idles until that one goes away), or the lock query hit
+	// a transient error.
 	for !d.acquire(ctx) {
 		select {
-		case <-time.After(5 * d.bus.cfg.PollInterval):
+		case <-time.After(5 * time.Second):
 		case <-ctx.Done():
 			return
 		}
 	}
 	defer d.release()
+
+	// The group's offset row is created once, not on every drain.
+	for {
+		_, err := d.bus.pool.Exec(ctx, `INSERT INTO offsets (grp, partition) VALUES ($1, $2) ON CONFLICT DO NOTHING`, d.group, d.partition)
+		if err == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		log.Error("bus: create offset row, retrying", "error", err)
+		select {
+		case <-time.After(time.Second):
+		case <-ctx.Done():
+			return
+		}
+	}
 
 	ticker := time.NewTicker(d.bus.cfg.PollInterval)
 	defer ticker.Stop()
@@ -341,9 +364,6 @@ type logRow struct {
 // rows it read, so run knows whether to loop straight away.
 func (d *dispatcher) drain(ctx context.Context) (int, error) {
 	pool := d.bus.pool
-	if _, err := pool.Exec(ctx, `INSERT INTO offsets (grp, partition) VALUES ($1, $2) ON CONFLICT DO NOTHING`, d.group, d.partition); err != nil {
-		return 0, err
-	}
 	var last int64
 	if err := pool.QueryRow(ctx, `SELECT last_seq FROM offsets WHERE grp = $1 AND partition = $2`, d.group, d.partition).Scan(&last); err != nil {
 		return 0, err
