@@ -156,10 +156,11 @@ func GetForUpdate(ctx context.Context, tx pgx.Tx, id string) (*Delivery, error) 
 	return scanDelivery(row)
 }
 
-// ListActive returns every delivery not yet COMPLETED, for the location
-// simulation loop to advance.
+// ListActive returns every simulated delivery still on the road, for the
+// location simulation loop to advance. Listed by status rather than
+// "not COMPLETED" so CANCELLED deliveries stop moving too.
 func (s *Store) ListActive(ctx context.Context) ([]*Delivery, error) {
-	rows, err := s.pool.Query(ctx, baseSelect+` WHERE status != 'COMPLETED' AND simulated = true`)
+	rows, err := s.pool.Query(ctx, baseSelect+` WHERE status IN ('ASSIGNED','PICKED_UP') AND simulated = true`)
 	if err != nil {
 		return nil, fmt.Errorf("list active deliveries: %w", err)
 	}
@@ -173,6 +174,65 @@ func (s *Store) ListActive(ctx context.Context) ([]*Delivery, error) {
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// AdvanceStatus sets the new status and its timestamp column, and returns
+// the seconds since the delivery was created (i.e. since assignment).
+func AdvanceStatus(ctx context.Context, tx pgx.Tx, id, status string) (elapsedSeconds int64, err error) {
+	err = tx.QueryRow(ctx, `
+		UPDATE deliveries SET status = $2, updated_at = now(),
+			picked_up_at = CASE WHEN $2 = 'PICKED_UP' THEN now() ELSE picked_up_at END,
+			completed_at = CASE WHEN $2 = 'COMPLETED' THEN now() ELSE completed_at END
+		WHERE id = $1
+		RETURNING extract(epoch FROM now() - created_at)::bigint`, id, status).Scan(&elapsedSeconds)
+	if err != nil {
+		return 0, fmt.Errorf("advance delivery %s to %s: %w", id, status, err)
+	}
+	return elapsedSeconds, nil
+}
+
+func GetByOrderForUpdate(ctx context.Context, tx pgx.Tx, orderID string) (*Delivery, error) {
+	return scanDelivery(tx.QueryRow(ctx, baseSelect+` WHERE order_id=$1 FOR UPDATE`, orderID))
+}
+
+func (s *Store) GetDriver(ctx context.Context, id string) (*Driver, error) {
+	d := &Driver{}
+	err := s.pool.QueryRow(ctx, `SELECT id, name, vehicle, status, lat, lng FROM drivers WHERE id=$1`, id).
+		Scan(&d.ID, &d.Name, &d.Vehicle, &d.Status, &d.Lat, &d.Lng)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get driver %s: %w", id, err)
+	}
+	return d, nil
+}
+
+// LockOrder takes a transaction-scoped advisory lock on orderID. Assignment
+// (restaurant.order-ready, the pending retrier) and cancellation
+// (orders.cancelled) both take it first, so they serialize per order: without
+// it, a cancel could commit its tombstone while an assignment that already
+// checked the tombstone is still inserting a delivery, leaking a BUSY driver.
+func LockOrder(ctx context.Context, tx pgx.Tx, orderID string) error {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, orderID); err != nil {
+		return fmt.Errorf("lock order %s: %w", orderID, err)
+	}
+	return nil
+}
+
+func MarkOrderCancelled(ctx context.Context, tx pgx.Tx, orderID string) error {
+	if _, err := tx.Exec(ctx, `INSERT INTO cancelled_orders (order_id) VALUES ($1) ON CONFLICT DO NOTHING`, orderID); err != nil {
+		return fmt.Errorf("tombstone order %s: %w", orderID, err)
+	}
+	return nil
+}
+
+func IsOrderCancelled(ctx context.Context, tx pgx.Tx, orderID string) (bool, error) {
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM cancelled_orders WHERE order_id=$1)`, orderID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check tombstone for order %s: %w", orderID, err)
+	}
+	return exists, nil
 }
 
 func UpdateStatus(ctx context.Context, tx pgx.Tx, id, status string) error {

@@ -9,6 +9,7 @@ package sim
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
 	"github.com/rainercoetzer/delivery-platform/services/delivery/internal/consumers"
 	"github.com/rainercoetzer/delivery-platform/services/delivery/internal/domain"
+	"github.com/rainercoetzer/delivery-platform/services/delivery/internal/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/services/delivery/internal/store"
 )
 
@@ -55,11 +57,14 @@ func (p *PendingAssignmentRetrier) tick(ctx context.Context) {
 		err := p.Pool.WithTx(ctx, func(tx pgx.Tx) error {
 			pickup := events.Location{Lat: pa.PickupLat, Lng: pa.PickupLng}
 			dropoff := events.Location{Lat: pa.DropoffLat, Lng: pa.DropoffLng}
-			assigned, err := consumers.TryAssign(ctx, tx, pa.OrderID, pa.RestaurantID, pickup, dropoff)
+			outcome, err := consumers.TryAssign(ctx, tx, pa.OrderID, pa.RestaurantID, pickup, dropoff)
 			if err != nil {
 				return err
 			}
-			if assigned {
+			// Assigned: done. Cancelled: the cancel handler normally deletes
+			// the row itself, but drop it here too in case it was queued
+			// after the cancel landed. NoDriverFree: leave it for next tick.
+			if outcome == consumers.Assigned || outcome == consumers.OrderCancelled {
 				return store.DeletePending(ctx, tx, pa.OrderID)
 			}
 			return nil
@@ -78,6 +83,11 @@ type LocationSimulator struct {
 	Interval time.Duration
 	// StepMeters is how far a driver moves toward its target per tick.
 	StepMeters float64
+	// Autopilot (DEMO_AUTOPILOT) makes a simulated driver pick up when it
+	// reaches the restaurant and complete when it reaches the customer, so
+	// an order finishes with nobody tapping buttons. Off by default: with
+	// it off, arriving only means the driver is waiting for a real tap.
+	Autopilot bool
 }
 
 func (s *LocationSimulator) Run(ctx context.Context) {
@@ -107,7 +117,7 @@ func (s *LocationSimulator) tick(ctx context.Context) {
 	}
 	for _, d := range deliveries {
 		target := events.Location{Lat: d.DropoffLat, Lng: d.DropoffLng}
-		if d.Status == "ASSIGNED" {
+		if d.Status == lifecycle.StatusAssigned {
 			target = events.Location{Lat: d.PickupLat, Lng: d.PickupLng}
 		}
 		s.advance(ctx, d, target)
@@ -115,19 +125,11 @@ func (s *LocationSimulator) tick(ctx context.Context) {
 }
 
 func (s *LocationSimulator) advance(ctx context.Context, d *store.Delivery, target events.Location) {
-	drivers, err := s.Store.ListDrivers(ctx)
+	// One lookup per delivery. This used to list every driver per delivery
+	// per tick (audit P1, O(drivers x deliveries)).
+	current, err := s.Store.GetDriver(ctx, d.DriverID)
 	if err != nil {
-		s.Log.Error("list drivers for simulation", "error", err)
-		return
-	}
-	var current *store.Driver
-	for _, dr := range drivers {
-		if dr.ID == d.DriverID {
-			current = dr
-			break
-		}
-	}
-	if current == nil {
+		s.Log.Error("load driver for simulation", "driverId", d.DriverID, "error", err)
 		return
 	}
 
@@ -158,9 +160,24 @@ func (s *LocationSimulator) advance(ctx context.Context, d *store.Delivery, targ
 		s.Log.Error("publish driver location", "error", err)
 	}
 
-	// Arriving at the pickup point while still ASSIGNED just means the
-	// driver is now waiting at the restaurant; the actual PICKED_UP
-	// transition still comes from the driver tapping "picked up" in the
-	// app (see api.pickedUp), so there is nothing further to do here.
-	_ = arrived
+	if arrived && s.Autopilot {
+		s.autopilot(ctx, d)
+	}
+}
+
+// autopilot performs the tap a real driver would make on arrival. Losing a
+// race to a real driver (ErrWrongState) is fine and not worth an error log.
+func (s *LocationSimulator) autopilot(ctx context.Context, d *store.Delivery) {
+	from, to := lifecycle.StatusPickedUp, lifecycle.StatusCompleted
+	if d.Status == lifecycle.StatusAssigned {
+		from, to = lifecycle.StatusAssigned, lifecycle.StatusPickedUp
+	}
+	err := lifecycle.Advance(ctx, s.Pool, d.ID, from, to)
+	switch {
+	case err == nil:
+		s.Log.Info("autopilot advanced delivery", "orderId", d.OrderID, "to", to)
+	case errors.Is(err, lifecycle.ErrWrongState):
+	default:
+		s.Log.Error("autopilot advance failed", "orderId", d.OrderID, "to", to, "error", err)
+	}
 }

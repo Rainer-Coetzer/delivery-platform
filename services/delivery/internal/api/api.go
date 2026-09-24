@@ -10,12 +10,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
-	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
-	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
+	"github.com/rainercoetzer/delivery-platform/services/delivery/internal/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/services/delivery/internal/store"
 )
 
@@ -124,7 +122,7 @@ func (a *API) reportLocation(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, "could not update location")
 		return
 	}
-	if _, err := a.Pool.Exec(r.Context(), `UPDATE deliveries SET simulated=false WHERE driver_id=$1 AND status != 'COMPLETED'`, driverID); err != nil {
+	if _, err := a.Pool.Exec(r.Context(), `UPDATE deliveries SET simulated=false WHERE driver_id=$1 AND status IN ('ASSIGNED','PICKED_UP')`, driverID); err != nil {
 		a.Log.Error("disable simulation after real gps ping", "error", err)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -144,45 +142,19 @@ func (a *API) getDelivery(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) pickedUp(w http.ResponseWriter, r *http.Request) {
-	a.transition(w, r, "ASSIGNED", "PICKED_UP", events.DeliveryPickedUp)
+	a.transition(w, r, lifecycle.StatusAssigned, lifecycle.StatusPickedUp)
 }
 
 func (a *API) completed(w http.ResponseWriter, r *http.Request) {
-	a.transition(w, r, "PICKED_UP", "COMPLETED", events.DeliveryCompleted)
+	a.transition(w, r, lifecycle.StatusPickedUp, lifecycle.StatusCompleted)
 }
 
-func (a *API) transition(w http.ResponseWriter, r *http.Request, from, to, topic string) {
-	id := chi.URLParam(r, "id")
-	ctx := r.Context()
-
-	err := a.Pool.WithTx(ctx, func(tx pgx.Tx) error {
-		d, err := store.GetForUpdate(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		if d.Status != from {
-			return errWrongState
-		}
-		if err := store.UpdateStatus(ctx, tx, id, to); err != nil {
-			return err
-		}
-		if to == "COMPLETED" {
-			if err := store.MarkDriverAvailable(ctx, tx, d.DriverID); err != nil {
-				return err
-			}
-		}
-		env, err := events.New(topic, d.OrderID, events.DeliveryProgressData{
-			OrderID: d.OrderID, DeliveryID: d.ID, DriverID: d.DriverID,
-		})
-		if err != nil {
-			return err
-		}
-		return outbox.Insert(ctx, tx, env)
-	})
+func (a *API) transition(w http.ResponseWriter, r *http.Request, from, to string) {
+	err := lifecycle.Advance(r.Context(), a.Pool, chi.URLParam(r, "id"), from, to)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		httpx.NotFound(w, "delivery not found")
-	case errors.Is(err, errWrongState):
+	case errors.Is(err, lifecycle.ErrWrongState):
 		httpx.Conflict(w, "delivery is not in the "+from+" state")
 	case err != nil:
 		a.Log.Error("delivery transition", "error", err)
@@ -191,5 +163,3 @@ func (a *API) transition(w http.ResponseWriter, r *http.Request, from, to, topic
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": to})
 	}
 }
-
-var errWrongState = errors.New("delivery not in expected state")

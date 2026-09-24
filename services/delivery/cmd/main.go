@@ -14,8 +14,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 
+	"github.com/rainercoetzer/delivery-platform/pkg/config"
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
-	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
 	"github.com/rainercoetzer/delivery-platform/pkg/kafka"
 	"github.com/rainercoetzer/delivery-platform/pkg/obs"
@@ -68,7 +68,7 @@ func main() {
 
 	consumer, err := kafka.NewConsumer(kafka.ConsumerConfig{
 		Brokers: brokers, GroupID: serviceName,
-		Topics: []string{events.RestaurantReady},
+		Topics: consumers.Topics,
 		Log:    log, DLQ: dlqProducer,
 	})
 	if err != nil {
@@ -90,7 +90,20 @@ func main() {
 		os.Exit(1)
 	}
 	defer locationProducer.Close()
-	simulator := &sim.LocationSimulator{Pool: pool, Store: st, Producer: locationProducer, Log: log}
+	autopilot, err := config.Bool("DEMO_AUTOPILOT", false)
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+	// 60m per 2s tick is a believable city speed but makes a demo order
+	// take minutes; the dev compose override raises it.
+	stepMeters, err := config.Float("SIM_STEP_METERS", 60)
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+	log.Info("driver simulation", "autopilot", autopilot, "stepMeters", stepMeters)
+	simulator := &sim.LocationSimulator{Pool: pool, Store: st, Producer: locationProducer, Log: log, StepMeters: stepMeters, Autopilot: autopilot}
 	go simulator.Run(ctx)
 
 	a := &api.API{Pool: pool, Store: st, Log: log}
