@@ -1,4 +1,4 @@
--- Runs once, when the Postgres container's data directory is empty (the
+-- Runs once (as the postgres superuser), when the Postgres container's data directory is empty (the
 -- standard docker-entrypoint-initdb.d behaviour). Creates one role and one
 -- database per service, so every service is isolated even though they
 -- share a single Postgres instance in this development setup.

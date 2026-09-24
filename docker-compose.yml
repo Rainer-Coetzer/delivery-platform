@@ -13,13 +13,24 @@ services:
 
   postgres:
     image: postgis/postgis:16-3.4-alpine
+    # DEV ONLY: fsync off. First boot writes nine databases plus PostGIS,
+    # and on Docker Desktop's slow volume I/O the init server's shutdown
+    # checkpoint overran pg_ctl's 60s limit, so first boot failed. The
+    # entrypoint passes these flags to the init server too. The cost is that
+    # a host crash can corrupt this dev database; never copy this flag to a
+    # real deployment.
+    command: ["postgres", "-c", "fsync=off", "-c", "full_page_writes=off"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # Our directory replaces the image's own initdb.d, dropping its
+      # 10_postgis.sh (a template_postgis DB plus PostGIS in "postgres", which
+      # nothing uses). Only delivery_db needs PostGIS, and 01-databases.sql
+      # creates it there.
+      - ./infra/postgres/initdb:/docker-entrypoint-initdb.d:ro
     ports:
       # 55432 on the host so it never collides with a locally installed
       # Postgres on 5432. Override with POSTGRES_HOST_PORT.
@@ -237,7 +248,7 @@ services:
       NOTIFICATION_SERVICE_URL: http://notification-service:8086
       ADMIN_SERVICE_URL: http://admin-service:8087
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
-    ports: ["8080:8080"] # the only public entry point
+    ports: ["${GATEWAY_HOST_PORT:-8080}:8080"] # the only public entry point; GATEWAY_HOST_PORT if 8080 is taken
     depends_on:
       customer-service: { condition: service_healthy }
       restaurant-service: { condition: service_healthy }
