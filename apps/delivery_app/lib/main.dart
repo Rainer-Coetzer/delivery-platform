@@ -13,7 +13,6 @@ import 'screens/customer/order_history_screen.dart';
 import 'screens/driver/driver_home_screen.dart';
 import 'screens/restaurant/restaurant_board_screen.dart';
 import 'screens/admin/admin_dashboard_screen.dart';
-import 'models/models.dart';
 
 void main() {
   runApp(const ProviderScope(child: DeliveryApp()));

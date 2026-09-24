@@ -27,10 +27,12 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen> {
   void initState() {
     super.initState();
     ref.read(orderRepositoryProvider).get(widget.orderId).then((o) {
-      if (mounted) setState(() {
-        _order = o;
-        _status = o.status;
-      });
+      if (mounted) {
+        setState(() {
+          _order = o;
+          _status = o.status;
+        });
+      }
     });
   }
 

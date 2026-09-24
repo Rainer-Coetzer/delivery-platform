@@ -64,7 +64,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                           style: TextStyle(fontSize: 12, color: Colors.grey)),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
-                        value: _paymentMethod,
+                        initialValue: _paymentMethod,
                         decoration: const InputDecoration(labelText: 'Payment method'),
                         items: const [
                           DropdownMenuItem(value: 'card', child: Text('Card')),
@@ -98,20 +98,13 @@ class _CartScreenState extends ConsumerState<CartScreen> {
       _error = null;
     });
     try {
-      final user = ref.read(authControllerProvider).user!;
-      final restaurants = await ref.read(restaurantsListProvider.future);
       final cartController = ref.read(cartProvider.notifier);
-      final restaurant = restaurants.firstWhere((r) => r.id == cartController.restaurantId);
       final dropoff = await _currentLocationOrFallback();
 
       final order = await ref.read(orderRepositoryProvider).create(
-            customerId: user.id,
-            customerName: user.name,
-            restaurantId: restaurant.id,
-            restaurantName: restaurant.name,
+            restaurantId: cartController.restaurantId!,
             lines: lines,
             paymentMethod: _paymentMethod,
-            pickup: LatLng2(restaurant.lat, restaurant.lng),
             dropoff: dropoff,
           );
 

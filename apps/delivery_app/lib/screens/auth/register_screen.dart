@@ -15,11 +15,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _name = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
-  String _role = 'customer';
   String? _error;
   bool _done = false;
-
-  static const _roles = ['customer', 'restaurant', 'driver', 'admin'];
 
   @override
   Widget build(BuildContext context) {
@@ -53,11 +50,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       const SizedBox(height: 12),
                       TextField(controller: _password, obscureText: true, decoration: const InputDecoration(labelText: 'Password (min 8 chars)')),
                       const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: _role,
-                        decoration: const InputDecoration(labelText: 'Role'),
-                        items: _roles.map((r) => DropdownMenuItem(value: r, child: Text(r))).toList(),
-                        onChanged: (v) => setState(() => _role = v!),
+                      const Text(
+                        'Restaurant and driver accounts are set up by an admin.',
+                        style: TextStyle(color: Colors.grey),
                       ),
                       if (_error != null) ...[
                         const SizedBox(height: 12),
@@ -81,7 +76,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   Future<void> _submit() async {
     final error = await ref
         .read(authControllerProvider.notifier)
-        .register(_name.text.trim(), _email.text.trim(), _password.text, _role);
+        .register(_name.text.trim(), _email.text.trim(), _password.text);
     if (!mounted) return;
     setState(() {
       _error = error;

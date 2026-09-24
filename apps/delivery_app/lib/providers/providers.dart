@@ -41,11 +41,14 @@ class AuthController extends StateNotifier<AuthState> {
     }
   }
 
-  Future<String?> register(String name, String email, String password, String role) async {
+  /// Public sign-up always creates a customer. Restaurant, driver and admin
+  /// accounts are created by an admin (POST /users), already linked to
+  /// their restaurant or driver record.
+  Future<String?> register(String name, String email, String password) async {
     state = const AuthState(loading: true);
     try {
       await _api.dio.post('/auth/register', data: {
-        'name': name, 'email': email, 'password': password, 'role': role,
+        'name': name, 'email': email, 'password': password,
       });
       state = const AuthState();
       return null;
@@ -134,7 +137,7 @@ class CartController extends StateNotifier<Map<String, CartLine>> {
     final existing = state[item.id];
     state = {
       ...state,
-      item.id: existing != null ? (existing..quantity++) : CartLine(item: item),
+      item.id: existing != null ? (existing..quantity += 1) : CartLine(item: item),
     };
   }
 
@@ -167,31 +170,19 @@ class OrderRepository {
   final ApiClient _api;
   OrderRepository(this._api);
 
+  /// Sends only what the customer chooses. The server prices every line
+  /// from the restaurant's own menu, takes the customer from the token and
+  /// the pickup point from the restaurant, so none of that is sent.
   Future<Order> create({
-    required String customerId,
-    required String customerName,
     required String restaurantId,
-    required String restaurantName,
     required List<CartLine> lines,
     required String paymentMethod,
-    required LatLng2 pickup,
     required LatLng2 dropoff,
   }) async {
     final res = await _api.dio.post('/orders/', data: {
-      'customerId': customerId,
-      'customerName': customerName,
       'restaurantId': restaurantId,
-      'restaurantName': restaurantName,
-      'items': lines
-          .map((l) => {
-                'menuItemId': l.item.id,
-                'name': l.item.name,
-                'quantity': l.quantity,
-                'unitPriceCents': l.item.priceCents,
-              })
-          .toList(),
+      'items': lines.map((l) => {'menuItemId': l.item.id, 'quantity': l.quantity}).toList(),
       'paymentMethod': paymentMethod,
-      'pickup': pickup.toJson(),
       'dropoff': dropoff.toJson(),
     });
     return Order.fromJson(res.data as Map<String, dynamic>);
@@ -224,11 +215,14 @@ final restaurantOrdersProvider = FutureProvider.family<List<Order>, String>((ref
 /// Emits every raw event envelope the gateway forwards for one order:
 /// orders.status-changed and delivery.location. The UI decodes `eventType`
 /// to decide what changed.
-final orderEventsProvider = StreamProvider.family.autoDispose<Map<String, dynamic>, String>((ref, orderId) {
+final orderEventsProvider = StreamProvider.family.autoDispose<Map<String, dynamic>, String>((ref, orderId) async* {
   final api = ref.watch(apiClientProvider);
-  final channel = WebSocketChannel.connect(Uri.parse(api.wsUrlForOrder(orderId)));
+  // The gateway requires the JWT on the socket (browsers can't set headers
+  // on a WebSocket handshake, so it goes in the query string).
+  final token = await api.readToken() ?? '';
+  final channel = WebSocketChannel.connect(Uri.parse(api.wsUrlForOrder(orderId, token)));
   ref.onDispose(() => channel.sink.close());
-  return channel.stream.map((raw) => jsonDecode(raw as String) as Map<String, dynamic>);
+  yield* channel.stream.map((raw) => jsonDecode(raw as String) as Map<String, dynamic>);
 });
 
 // --- Delivery / drivers ---
@@ -240,11 +234,6 @@ class DeliveryRepository {
   Future<List<Driver>> listDrivers() async {
     final res = await _api.dio.get('/drivers');
     return (res.data as List).map((e) => Driver.fromJson(e as Map<String, dynamic>)).toList();
-  }
-
-  Future<Driver> registerDriver(String name, double lat, double lng) async {
-    final res = await _api.dio.post('/drivers/', data: {'name': name, 'vehicle': 'bike', 'lat': lat, 'lng': lng});
-    return Driver.fromJson(res.data as Map<String, dynamic>);
   }
 
   Future<void> setStatus(String driverId, String status) {

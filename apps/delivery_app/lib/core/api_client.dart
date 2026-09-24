@@ -39,8 +39,8 @@ class ApiClient {
   Future<void> clearToken() => _storage.delete(key: _tokenKey);
 
   /// WebSocket URL for live order tracking, derived from the same base URL.
-  String wsUrlForOrder(String orderId) {
+  String wsUrlForOrder(String orderId, String token) {
     final base = dio.options.baseUrl.replaceFirst('http', 'ws');
-    return '$base/ws?orderId=$orderId';
+    return '$base/ws?orderId=${Uri.encodeQueryComponent(orderId)}&token=${Uri.encodeQueryComponent(token)}';
   }
 }

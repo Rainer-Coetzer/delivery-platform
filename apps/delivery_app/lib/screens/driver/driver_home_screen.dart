@@ -40,7 +40,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
         ],
       ),
       body: _driverId == null
-          ? _RegisterDriverPrompt(onRegistered: (id) => setState(() => _driverId = id))
+          ? const _RegisterDriverPrompt()
           : Padding(
               padding: const EdgeInsets.all(24),
               child: Column(
@@ -91,43 +91,23 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
   }
 }
 
-class _RegisterDriverPrompt extends ConsumerStatefulWidget {
-  final void Function(String driverId) onRegistered;
-  const _RegisterDriverPrompt({required this.onRegistered});
-
-  @override
-  ConsumerState<_RegisterDriverPrompt> createState() => _RegisterDriverPromptState();
-}
-
-class _RegisterDriverPromptState extends ConsumerState<_RegisterDriverPrompt> {
-  bool _loading = false;
+/// Shown when a driver account isn't linked to a driver record yet. Drivers
+/// can't create their own record any more: an admin onboards them (creates
+/// the driver, then this login with refId set), so nobody can claim to be
+/// a driver they aren't.
+class _RegisterDriverPrompt extends StatelessWidget {
+  const _RegisterDriverPrompt();
 
   @override
   Widget build(BuildContext context) {
-    final user = ref.watch(authControllerProvider).user!;
-    return Center(
+    return const Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('You need a driver profile before going online.'),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: _loading ? null : () => _register(user.name),
-              child: _loading ? const CircularProgressIndicator() : const Text('Create driver profile'),
-            ),
-          ],
+        padding: EdgeInsets.all(24),
+        child: Text(
+          "Your account isn't linked to a driver profile yet. Ask an admin to finish setting you up, then log in again.",
+          textAlign: TextAlign.center,
         ),
       ),
     );
-  }
-
-  Future<void> _register(String name) async {
-    setState(() => _loading = true);
-    // Windhoek CBD as a starting point; the driver's real position takes
-    // over as soon as they go online and GPS reporting begins.
-    final driver = await ref.read(deliveryRepositoryProvider).registerDriver(name, -22.5700, 17.0836);
-    widget.onRegistered(driver.id);
   }
 }
