@@ -8,6 +8,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -88,16 +89,17 @@ func run() error {
 	}
 	item := items[0]
 
+	if err := securitySmoke(login.Token, r.ID); err != nil {
+		return err
+	}
+
+	// Only item ids and quantities: the server prices from the catalogue.
 	// Cash always authorizes, so a random simulated card decline can't make
 	// the e2e flaky. The failure path gets its own tests.
 	body := map[string]any{
-		"customerId": login.User.ID, "customerName": login.User.Name,
-		"restaurantId": r.ID, "restaurantName": r.Name,
-		"items": []map[string]any{{
-			"menuItemId": item.ID, "name": item.Name, "quantity": 1, "unitPriceCents": item.PriceCents,
-		}},
+		"restaurantId":  r.ID,
+		"items":         []map[string]any{{"menuItemId": item.ID, "quantity": 1}},
 		"paymentMethod": "cash",
-		"pickup":        map[string]float64{"lat": r.Lat, "lng": r.Lng},
 		"dropoff":       map[string]float64{"lat": -22.5594, "lng": 17.0832},
 	}
 	var o order
@@ -105,6 +107,9 @@ func run() error {
 		return err
 	}
 	fmt.Printf("-> placed order %s (%s x1, total %d cents)\n", o.ID, item.Name, o.TotalCents)
+	if o.TotalCents < item.PriceCents {
+		return fmt.Errorf("order total %d is below the item price %d: server-side pricing is broken", o.TotalCents, item.PriceCents)
+	}
 
 	start := time.Now()
 	last := ""
@@ -130,6 +135,43 @@ func run() error {
 		hint = " (stuck here usually means DEMO_AUTOPILOT is off: start with -f docker-compose.dev.yml)"
 	}
 	return fmt.Errorf("order %s still %s after %s%s", o.ID, last, timeout, hint)
+}
+
+// securitySmoke checks the audit P0 holes stay closed against the running
+// stack. Each expectation names the finding it guards.
+func securitySmoke(customerToken, restaurantID string) error {
+	checks := []struct {
+		name         string
+		method, path string
+		token        string
+		body         any
+		want         int
+	}{
+		{"P0-3 public signup as admin", http.MethodPost, "/auth/register", "",
+			map[string]string{"name": "x", "email": "e2e-evil@example.com", "password": "password123", "role": "admin"}, 400},
+		{"P0-5 customer reads admin reports", http.MethodGet, "/admin/overview", customerToken, nil, 403},
+		{"P0-5 customer edits a menu", http.MethodPost, "/restaurants/" + restaurantID + "/menu-items", customerToken,
+			map[string]any{"name": "x", "priceCents": 1, "stockQty": 1, "available": true}, 403},
+		{"P0-5 customer lists drivers", http.MethodGet, "/drivers", customerToken, nil, 403},
+		{"P0-5 no token", http.MethodGet, "/orders?customerId=anyone", "", nil, 401},
+		{"P0-7 websocket without token", http.MethodGet, "/ws?orderId=x", "", nil, 401},
+	}
+	fmt.Println("-> security smoke checks")
+	for _, c := range checks {
+		err := client.Do(c.method, gateway+c.path, c.token, c.body, nil)
+		got := 200
+		var se *client.StatusError
+		if errors.As(err, &se) {
+			got = se.Status
+		} else if err != nil {
+			return fmt.Errorf("%s: %w", c.name, err)
+		}
+		if got != c.want {
+			return fmt.Errorf("%s: got %d, want %d", c.name, got, c.want)
+		}
+		fmt.Printf("   ok  %s -> %d\n", c.name, got)
+	}
+	return nil
 }
 
 func envOr(key, fallback string) string {

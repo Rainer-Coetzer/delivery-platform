@@ -1,8 +1,12 @@
 name: delivery-platform
 
+# PROFILE=dev allows the insecure local defaults (dev JWT secret, wildcard
+# origins). Any other value makes every service refuse to boot unless
+# JWT_SECRET and ALLOWED_ORIGINS are properly set (pkg/config/security.go).
 x-service-env: &service-env
   KAFKA_BROKERS: kafka:9092
-  JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+  PROFILE: ${PROFILE:-dev}
+  JWT_SECRET: ${JWT_SECRET:-}
 
 services:
   # --- Infrastructure ---
@@ -19,7 +23,7 @@ services:
     ports:
       # 55432 on the host so it never collides with a locally installed
       # Postgres on 5432. Override with POSTGRES_HOST_PORT.
-      - "${POSTGRES_HOST_PORT:-55432}:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-55432}:5432"
     healthcheck:
       # -h 127.0.0.1 forces TCP. During first boot the entrypoint runs
       # init.sql on a temporary server that only listens on the Unix socket,
@@ -58,7 +62,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
     ports:
-      - "29092:29092" # host access for services run with `go run`; inside the network use kafka:9092
+      - "127.0.0.1:29092:29092" # host access for services run with `go run`; inside the network use kafka:9092
     healthcheck:
       # Each check starts a JVM, so give it room; a 5s timeout flaps.
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"]
@@ -89,7 +93,7 @@ services:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
     ports:
-      - "8090:8080"
+      - "127.0.0.1:8090:8080"
 
   # --- Application services ---
 
@@ -101,7 +105,6 @@ services:
       <<: *service-env
       DATABASE_URL: postgres://customer:customer@postgres:5432/customer_db?sslmode=disable
       PORT: "8081"
-    ports: ["8081:8081"]
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
@@ -119,7 +122,6 @@ services:
       <<: *service-env
       DATABASE_URL: postgres://restaurant:restaurant@postgres:5432/restaurant_db?sslmode=disable
       PORT: "8082"
-    ports: ["8082:8082"]
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
@@ -137,7 +139,6 @@ services:
       <<: *service-env
       DATABASE_URL: postgres://order:order@postgres:5432/order_db?sslmode=disable
       PORT: "8083"
-    ports: ["8083:8083"]
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
@@ -155,7 +156,6 @@ services:
       <<: *service-env
       DATABASE_URL: postgres://payment:payment@postgres:5432/payment_db?sslmode=disable
       PORT: "8084"
-    ports: ["8084:8084"]
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
@@ -173,7 +173,6 @@ services:
       <<: *service-env
       DATABASE_URL: postgres://delivery:delivery@postgres:5432/delivery_db?sslmode=disable
       PORT: "8085"
-    ports: ["8085:8085"]
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
@@ -191,7 +190,6 @@ services:
       <<: *service-env
       DATABASE_URL: postgres://notification:notification@postgres:5432/notification_db?sslmode=disable
       PORT: "8086"
-    ports: ["8086:8086"]
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
@@ -209,7 +207,6 @@ services:
       <<: *service-env
       DATABASE_URL: postgres://admin:admin@postgres:5432/admin_db?sslmode=disable
       PORT: "8087"
-    ports: ["8087:8087"]
     depends_on:
       postgres: { condition: service_healthy }
       kafka-init: { condition: service_completed_successfully }
@@ -233,7 +230,8 @@ services:
       DELIVERY_SERVICE_URL: http://delivery-service:8085
       NOTIFICATION_SERVICE_URL: http://notification-service:8086
       ADMIN_SERVICE_URL: http://admin-service:8087
-    ports: ["8080:8080"]
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    ports: ["8080:8080"] # the only public entry point
     depends_on:
       customer-service: { condition: service_healthy }
       restaurant-service: { condition: service_healthy }
@@ -254,18 +252,18 @@ services:
     image: prom/prometheus:latest
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    ports: ["9090:9090"]
+    ports: ["127.0.0.1:9090:9090"]
 
   grafana:
     image: grafana/grafana:latest
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer # read-only; log in as admin to edit dashboards
     volumes:
       - ./infra/grafana/dashboards:/etc/grafana/provisioning/dashboards
       - ./infra/grafana/datasources:/etc/grafana/provisioning/datasources
-    ports: ["3000:3000"]
+    ports: ["127.0.0.1:3000:3000"]
     depends_on: [prometheus]
 
   jaeger:
@@ -273,8 +271,8 @@ services:
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
-      - "16686:16686" # UI
-      - "4318:4318"   # OTLP HTTP
+      - "127.0.0.1:16686:16686" # UI
+      - "127.0.0.1:4318:4318"   # OTLP HTTP
 
   # --- Flutter web client (build first: cd apps/delivery_app && flutter build web) ---
   web:

@@ -6,6 +6,12 @@
 # Never use this outside local development: autopilot marks food ready and
 # delivered on a timer.
 services:
+  customer-service:
+    environment:
+      # Dev-only first admin; seed.sh logs in as this account. Outside dev,
+      # set BOOTSTRAP_ADMIN_* yourself (12+ char password) or not at all.
+      BOOTSTRAP_ADMIN_EMAIL: admin@example.com
+      BOOTSTRAP_ADMIN_PASSWORD: admin-dev-password
   restaurant-service:
     environment:
       DEMO_AUTOPILOT: "true"
