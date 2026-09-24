@@ -33,6 +33,14 @@ const serviceName = "customer-service"
 func main() {
 	log := obs.NewLogger(serviceName)
 
+	// Validate config before touching the database: a misconfigured service
+	// must refuse to start without having run migrations first.
+	secret, err := config.JWTSecret()
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+
 	dsn := env("DATABASE_URL", "postgres://customer:customer@localhost:5432/customer_db?sslmode=disable")
 	if err := db.Migrate(dsn, migrations.FS, "."); err != nil {
 		log.Error("migrate", "error", err)
@@ -71,11 +79,6 @@ func main() {
 	handlers := &consumers.Handlers{Pool: pool, Log: log}
 	go consumer.Run(ctx, handlers.Handle)
 
-	secret, err := config.JWTSecret()
-	if err != nil {
-		log.Error("config", "error", err)
-		os.Exit(1)
-	}
 	st := store.New(pool)
 	if err := bootstrapAdmin(ctx, st, log); err != nil {
 		log.Error("bootstrap admin", "error", err)

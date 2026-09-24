@@ -30,6 +30,14 @@ const serviceName = "payment-service"
 func main() {
 	log := obs.NewLogger(serviceName)
 
+	// Validate config before touching the database: a misconfigured service
+	// must refuse to start without having run migrations first.
+	secret, err := config.JWTSecret()
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+
 	dsn := env("DATABASE_URL", "postgres://payment:payment@localhost:5432/payment_db?sslmode=disable")
 	if err := db.Migrate(dsn, migrations.FS, "."); err != nil {
 		log.Error("migrate", "error", err)
@@ -78,11 +86,6 @@ func main() {
 	handlers := &consumers.Handlers{Pool: pool, Log: log}
 	go consumer.Run(ctx, handlers.Handle)
 
-	secret, err := config.JWTSecret()
-	if err != nil {
-		log.Error("config", "error", err)
-		os.Exit(1)
-	}
 	a := &api.API{Store: store.New(pool), Log: log, Auth: auth.NewIssuer(secret, 0).Middleware}
 	router := chi.NewRouter()
 	// No CORS: only the gateway is browser-facing (see customer-service).

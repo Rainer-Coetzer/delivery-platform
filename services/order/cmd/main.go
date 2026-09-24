@@ -32,6 +32,14 @@ const serviceName = "order-service"
 func main() {
 	log := obs.NewLogger(serviceName)
 
+	// Validate config before touching the database: a misconfigured service
+	// must refuse to start without having run migrations first.
+	secret, err := config.JWTSecret()
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+
 	dsn := env("DATABASE_URL", "postgres://order:order@localhost:5432/order_db?sslmode=disable")
 	if err := db.Migrate(dsn, migrations.FS, "."); err != nil {
 		log.Error("migrate", "error", err)
@@ -83,11 +91,6 @@ func main() {
 	handlers := &consumers.Handlers{Pool: pool, Log: log}
 	go consumer.Run(ctx, handlers.Handle)
 
-	secret, err := config.JWTSecret()
-	if err != nil {
-		log.Error("config", "error", err)
-		os.Exit(1)
-	}
 	a := &api.API{
 		Pool: pool, Store: store.New(pool), Log: log,
 		Catalogue: catalogue.New(env("RESTAURANT_SERVICE_URL", "http://restaurant-service:8082")),

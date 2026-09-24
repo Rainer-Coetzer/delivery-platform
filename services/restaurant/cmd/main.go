@@ -34,6 +34,14 @@ const serviceName = "restaurant-service"
 func main() {
 	log := obs.NewLogger(serviceName)
 
+	// Validate config before touching the database: a misconfigured service
+	// must refuse to start without having run migrations first.
+	secret, err := config.JWTSecret()
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+
 	dsn := env("DATABASE_URL", "postgres://restaurant:restaurant@localhost:5432/restaurant_db?sslmode=disable")
 	if err := db.Migrate(dsn, migrations.FS, "."); err != nil {
 		log.Error("migrate", "error", err)
@@ -98,11 +106,6 @@ func main() {
 		go (&kitchen.Autopilot{Pool: pool, Store: st, Log: log, PrepTime: prep}).Run(ctx)
 	}
 
-	secret, err := config.JWTSecret()
-	if err != nil {
-		log.Error("config", "error", err)
-		os.Exit(1)
-	}
 	a := &api.API{Pool: pool, Store: st, Log: log, Auth: auth.NewIssuer(secret, 0).Middleware}
 	// No CORS: only the gateway is browser-facing (see customer-service).
 	router := chi.NewRouter()
