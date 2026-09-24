@@ -20,7 +20,7 @@ A distributed food delivery platform built with **Go** microservices, **Kafka**,
 
 ## Running it
 
-Prerequisites: Docker, Go 1.23+ (for local dev outside containers), and
+Prerequisites: Docker, Go 1.26+ (for local dev outside containers), and
 `jq` if you want to run `scripts/e2e.sh`.
 
 ```bash
