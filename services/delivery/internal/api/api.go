@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/rainercoetzer/delivery-platform/pkg/auth"
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
 	"github.com/rainercoetzer/delivery-platform/services/delivery/internal/lifecycle"
@@ -21,21 +22,46 @@ type API struct {
 	Pool  *db.Pool
 	Store *store.Store
 	Log   *slog.Logger
+	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
+	Auth func(http.Handler) http.Handler
 }
 
 func (a *API) Routes(r chi.Router) {
 	r.Get("/healthz", httpx.Health)
 	r.Route("/drivers", func(r chi.Router) {
-		r.Post("/", a.registerDriver)
-		r.Get("/", a.listDrivers)
-		r.Patch("/{id}/status", a.setDriverStatus)
-		r.Patch("/{id}/location", a.reportLocation)
+		r.Use(a.Auth)
+		// Admins onboard drivers; the admin then creates the driver's login
+		// with refId = this driver's id (customer-service POST /users).
+		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/", a.registerDriver)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Get("/", a.listDrivers)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Use(ownDriver)
+			r.Patch("/status", a.setDriverStatus)
+			r.Patch("/location", a.reportLocation)
+		})
 	})
 	r.Route("/deliveries", func(r chi.Router) {
+		r.Use(a.Auth)
 		r.Get("/{orderId}", a.getDelivery)
 		r.Post("/{id}/picked-up", a.pickedUp)
 		r.Post("/{id}/completed", a.completed)
 	})
+}
+
+// ownDriver allows the driver account linked to {id}, or an admin.
+func ownDriver(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !auth.MustFromContext(r.Context()).ActsAs(auth.RoleDriver, chi.URLParam(r, "id")) {
+			httpx.Forbidden(w, "only this driver (or an admin) can do this")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// assignedTo reports whether caller is d's driver or an admin.
+func assignedTo(caller *auth.Claims, d *store.Delivery) bool {
+	return caller.IsAdmin() || (d.DriverID != "" && caller.ActsAs(auth.RoleDriver, d.DriverID))
 }
 
 type driverRequest struct {
@@ -138,6 +164,10 @@ func (a *API) getDelivery(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, "could not load delivery")
 		return
 	}
+	if !assignedTo(auth.MustFromContext(r.Context()), d) {
+		httpx.NotFound(w, "delivery not found")
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, d)
 }
 
@@ -150,7 +180,14 @@ func (a *API) completed(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) transition(w http.ResponseWriter, r *http.Request, from, to string) {
-	err := lifecycle.Advance(r.Context(), a.Pool, chi.URLParam(r, "id"), from, to)
+	id := chi.URLParam(r, "id")
+	d, err := a.Store.Get(r.Context(), id)
+	if err == nil && !assignedTo(auth.MustFromContext(r.Context()), d) {
+		err = store.ErrNotFound // someone else's delivery: indistinguishable from missing
+	}
+	if err == nil {
+		err = lifecycle.Advance(r.Context(), a.Pool, id, from, to)
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		httpx.NotFound(w, "delivery not found")

@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/cors"
 
+	"github.com/rainercoetzer/delivery-platform/pkg/auth"
 	"github.com/rainercoetzer/delivery-platform/pkg/config"
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
@@ -106,9 +106,14 @@ func main() {
 	simulator := &sim.LocationSimulator{Pool: pool, Store: st, Producer: locationProducer, Log: log, StepMeters: stepMeters, Autopilot: autopilot}
 	go simulator.Run(ctx)
 
-	a := &api.API{Pool: pool, Store: st, Log: log}
+	secret, err := config.JWTSecret()
+	if err != nil {
+		log.Error("config", "error", err)
+		os.Exit(1)
+	}
+	a := &api.API{Pool: pool, Store: st, Log: log, Auth: auth.NewIssuer(secret, 0).Middleware}
 	router := chi.NewRouter()
-	router.Use(cors.Handler(cors.Options{AllowedOrigins: []string{"*"}, AllowedMethods: []string{"GET", "POST", "PATCH", "OPTIONS"}, AllowedHeaders: []string{"Authorization", "Content-Type"}}))
+	// No CORS: only the gateway is browser-facing (see customer-service).
 	router.Use(httpx.RequestLogger(serviceName, log))
 	router.Get("/metrics", obs.MetricsHandler().ServeHTTP)
 	a.Routes(router)

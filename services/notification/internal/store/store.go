@@ -51,6 +51,15 @@ func (s *Store) ListFor(ctx context.Context, recipient string, limit int) ([]*No
 	return out, rows.Err()
 }
 
+// Recipient returns the inbox a notification belongs to, for ownership checks.
+func (s *Store) Recipient(ctx context.Context, id string) (string, error) {
+	var r string
+	if err := s.pool.QueryRow(ctx, `SELECT recipient FROM notifications WHERE id=$1`, id).Scan(&r); err != nil {
+		return "", fmt.Errorf("load notification %s: %w", id, err)
+	}
+	return r, nil
+}
+
 func (s *Store) MarkRead(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE notifications SET read_at=now() WHERE id=$1`, id)
 	if err != nil {

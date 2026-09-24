@@ -6,19 +6,25 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/rainercoetzer/delivery-platform/pkg/auth"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
 	"github.com/rainercoetzer/delivery-platform/services/admin/internal/store"
 )
 
 type API struct {
 	Store *store.Store
+	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
+	Auth func(http.Handler) http.Handler
 }
 
 func (a *API) Routes(r chi.Router) {
 	r.Get("/healthz", httpx.Health)
-	r.Get("/admin/overview", a.overview)
-	r.Get("/admin/restaurants/{id}/stats", a.restaurantStats)
-	r.Get("/admin/drivers/{id}/stats", a.driverStats)
+	r.Route("/admin", func(r chi.Router) {
+		r.Use(a.Auth, auth.RequireRole(auth.RoleAdmin))
+		r.Get("/overview", a.overview)
+		r.Get("/restaurants/{id}/stats", a.restaurantStats)
+		r.Get("/drivers/{id}/stats", a.driverStats)
+	})
 }
 
 func (a *API) overview(w http.ResponseWriter, r *http.Request) {
