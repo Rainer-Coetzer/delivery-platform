@@ -8,6 +8,17 @@ on:
 jobs:
   go:
     runs-on: ubuntu-latest
+    # Same PostGIS image as docker-compose.yml, for the -tags=integration
+    # tests (pkg/db/dbtest creates a throwaway database per test on it).
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -h 127.0.0.1"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -17,12 +28,17 @@ jobs:
       - name: Build
         run: go build ./...
       - name: Vet
-        run: go vet ./...
-      - name: Test
+        run: go vet ./... && go vet -tags=integration ./...
+      - name: Unit tests
         run: go test ./... -race -count=1
+      - name: Integration tests
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+        run: go test -tags=integration ./... -race -count=1
       - name: gofmt check
         run: |
-          diff <(gofmt -l .) <(echo -n "")
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then echo "gofmt needed on:"; echo "$unformatted"; exit 1; fi
 
   flutter:
     runs-on: ubuntu-latest
