@@ -1,0 +1,268 @@
+name: delivery-platform
+
+x-service-env: &service-env
+  KAFKA_BROKERS: kafka:9092
+  JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+
+services:
+  # --- Infrastructure ---
+
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  kafka:
+    image: bitnami/kafka:3.7
+    environment:
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "false"
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    ports:
+      - "29092:29092" # host access; from inside the network use kafka:9092, per docs/SETUP.md
+    volumes:
+      - kafkadata:/bitnami/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  kafka-init:
+    image: bitnami/kafka:3.7
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./infra/kafka/topics.sh:/topics.sh:ro
+    entrypoint: ["/bin/sh", "/topics.sh"]
+    environment:
+      KAFKA_BROKER: kafka:9092
+    restart: "no"
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    ports:
+      - "8090:8080"
+
+  # --- Application services ---
+
+  customer-service:
+    build:
+      context: .
+      dockerfile: services/customer/Dockerfile
+    environment:
+      <<: *service-env
+      DATABASE_URL: postgres://customer:customer@postgres:5432/customer_db?sslmode=disable
+      PORT: "8081"
+    ports: ["8081:8081"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  restaurant-service:
+    build:
+      context: .
+      dockerfile: services/restaurant/Dockerfile
+    environment:
+      <<: *service-env
+      DATABASE_URL: postgres://restaurant:restaurant@postgres:5432/restaurant_db?sslmode=disable
+      PORT: "8082"
+    ports: ["8082:8082"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8082/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  order-service:
+    build:
+      context: .
+      dockerfile: services/order/Dockerfile
+    environment:
+      <<: *service-env
+      DATABASE_URL: postgres://order:order@postgres:5432/order_db?sslmode=disable
+      PORT: "8083"
+    ports: ["8083:8083"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8083/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: services/payment/Dockerfile
+    environment:
+      <<: *service-env
+      DATABASE_URL: postgres://payment:payment@postgres:5432/payment_db?sslmode=disable
+      PORT: "8084"
+    ports: ["8084:8084"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8084/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  delivery-service:
+    build:
+      context: .
+      dockerfile: services/delivery/Dockerfile
+    environment:
+      <<: *service-env
+      DATABASE_URL: postgres://delivery:delivery@postgres:5432/delivery_db?sslmode=disable
+      PORT: "8085"
+    ports: ["8085:8085"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8085/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: services/notification/Dockerfile
+    environment:
+      <<: *service-env
+      DATABASE_URL: postgres://notification:notification@postgres:5432/notification_db?sslmode=disable
+      PORT: "8086"
+    ports: ["8086:8086"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8086/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  admin-service:
+    build:
+      context: .
+      dockerfile: services/admin/Dockerfile
+    environment:
+      <<: *service-env
+      DATABASE_URL: postgres://admin:admin@postgres:5432/admin_db?sslmode=disable
+      PORT: "8087"
+    ports: ["8087:8087"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8087/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  gateway:
+    build:
+      context: .
+      dockerfile: services/gateway/Dockerfile
+    environment:
+      <<: *service-env
+      PORT: "8080"
+      CUSTOMER_SERVICE_URL: http://customer-service:8081
+      RESTAURANT_SERVICE_URL: http://restaurant-service:8082
+      ORDER_SERVICE_URL: http://order-service:8083
+      PAYMENT_SERVICE_URL: http://payment-service:8084
+      DELIVERY_SERVICE_URL: http://delivery-service:8085
+      NOTIFICATION_SERVICE_URL: http://notification-service:8086
+      ADMIN_SERVICE_URL: http://admin-service:8087
+    ports: ["8080:8080"]
+    depends_on:
+      customer-service: { condition: service_healthy }
+      restaurant-service: { condition: service_healthy }
+      order-service: { condition: service_healthy }
+      payment-service: { condition: service_healthy }
+      delivery-service: { condition: service_healthy }
+      notification-service: { condition: service_healthy }
+      admin-service: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --- Observability ---
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./infra/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./infra/grafana/datasources:/etc/grafana/provisioning/datasources
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # UI
+      - "4318:4318"   # OTLP HTTP
+
+  # --- Flutter web client (build first: cd apps/delivery_app && flutter build web) ---
+  web:
+    image: nginx:alpine
+    volumes:
+      - ./apps/delivery_app/build/web:/usr/share/nginx/html:ro
+    ports: ["8000:80"]
+    depends_on: [gateway]
+    profiles: ["web"]
+
+volumes:
+  pgdata:
+  kafkadata:

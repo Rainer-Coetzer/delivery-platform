@@ -1,0 +1,30 @@
+# Go
+/bin/
+*.exe
+*.test
+*.out
+
+# Env / secrets — only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# Flutter / Dart
+apps/delivery_app/build/
+apps/delivery_app/.dart_tool/
+apps/delivery_app/.flutter-plugins
+apps/delivery_app/.flutter-plugins-dependencies
+apps/delivery_app/.packages
+apps/delivery_app/ios/Pods/
+apps/delivery_app/android/.gradle/
+apps/delivery_app/**/*.g.dart
+apps/delivery_app/**/*.freezed.dart
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

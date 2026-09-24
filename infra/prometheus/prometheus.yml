@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: services
+    static_configs:
+      - targets:
+          - gateway:8080
+          - customer-service:8081
+          - restaurant-service:8082
+          - order-service:8083
+          - payment-service:8084
+          - delivery-service:8085
+          - notification-service:8086
+          - admin-service:8087

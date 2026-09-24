@@ -1,0 +1,16 @@
+# Multi-stage build: compile with the full Go toolchain, run on a minimal
+# Alpine image (not fully distroless) so the container has wget for its own
+# Docker healthcheck, per docker-compose.yml.
+FROM golang:1.23-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY pkg ./pkg
+COPY services/order ./services/order
+RUN --mount=type=cache,target=/root/.cache/go-build     --mount=type=cache,target=/go/pkg/mod     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w"     -o /out/order-service ./services/order/cmd
+
+FROM alpine:3.19
+RUN addgroup -S app && adduser -S app -G app
+COPY --from=build /out/order-service /order-service
+USER app
+EXPOSE 8083
+ENTRYPOINT ["/order-service"]

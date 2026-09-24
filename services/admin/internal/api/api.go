@@ -1,0 +1,49 @@
+// Package api exposes read-only reports over the admin read model.
+package api
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
+	"github.com/rainercoetzer/delivery-platform/services/admin/internal/store"
+)
+
+type API struct {
+	Store *store.Store
+}
+
+func (a *API) Routes(r chi.Router) {
+	r.Get("/healthz", httpx.Health)
+	r.Get("/admin/overview", a.overview)
+	r.Get("/admin/restaurants/{id}/stats", a.restaurantStats)
+	r.Get("/admin/drivers/{id}/stats", a.driverStats)
+}
+
+func (a *API) overview(w http.ResponseWriter, r *http.Request) {
+	o, err := a.Store.Overview(r.Context())
+	if err != nil {
+		httpx.Internal(w, "could not load overview")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, o)
+}
+
+func (a *API) restaurantStats(w http.ResponseWriter, r *http.Request) {
+	s, err := a.Store.RestaurantStats(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.Internal(w, "could not load restaurant stats")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, s)
+}
+
+func (a *API) driverStats(w http.ResponseWriter, r *http.Request) {
+	s, err := a.Store.DriverStats(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httpx.Internal(w, "could not load driver stats")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, s)
+}

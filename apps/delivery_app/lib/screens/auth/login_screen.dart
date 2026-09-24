@@ -1,0 +1,68 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../providers/providers.dart';
+
+class LoginScreen extends ConsumerStatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends ConsumerState<LoginScreen> {
+  final _email = TextEditingController(text: 'nangula@example.com');
+  final _password = TextEditingController(text: 'password123');
+  String? _error;
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = ref.watch(authControllerProvider);
+
+    return Scaffold(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 400),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Icon(Icons.delivery_dining, size: 64, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(height: 8),
+                Text('Delivery Platform', style: Theme.of(context).textTheme.headlineSmall, textAlign: TextAlign.center),
+                const SizedBox(height: 24),
+                TextField(controller: _email, decoration: const InputDecoration(labelText: 'Email')),
+                const SizedBox(height: 12),
+                TextField(controller: _password, obscureText: true, decoration: const InputDecoration(labelText: 'Password')),
+                if (_error != null) ...[
+                  const SizedBox(height: 12),
+                  Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                ],
+                const SizedBox(height: 20),
+                FilledButton(
+                  onPressed: auth.loading ? null : _submit,
+                  child: auth.loading
+                      ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('Log in'),
+                ),
+                TextButton(
+                  onPressed: () => context.go('/register'),
+                  child: const Text("Don't have an account? Register"),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _submit() async {
+    final error = await ref.read(authControllerProvider.notifier).login(_email.text.trim(), _password.text);
+    if (!mounted) return;
+    setState(() => _error = error);
+  }
+}
