@@ -6,6 +6,13 @@ Kafka, PostgreSQL/PostGIS, a Flutter client, all in Docker Compose. See
 known gaps and the improvement plan, and [TESTING.md](TESTING.md) for how
 each part is tested.
 
+> **Direction (September 2026).** This is becoming a white-label logistics
+> platform hosted once per client. [ADR-0002](adr/0002-modular-monolith.md):
+> one binary, schema per module, a pluggable events bus.
+> [ADR-0003](adr/0003-generic-logistics-model.md): a generic job, stop and
+> agent core, where food delivery is one vertical pack. The diagram below is
+> today's microservice shape, which remains available as the `full` profile.
+
 ## Services
 
 ```mermaid
