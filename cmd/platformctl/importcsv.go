@@ -395,11 +395,30 @@ func login(gateway, email string, br *brand.Brand) (*session, error) {
 	if email == "" || password == "" {
 		return nil, errors.New("an admin must sign in: pass --email and set PLATFORMCTL_PASSWORD (or BOOTSTRAP_ADMIN_* in .env)")
 	}
+	if err := safeToSendPassword(gateway); err != nil {
+		return nil, err
+	}
 	var res struct{ Token string }
 	if err := client.Do(http.MethodPost, gateway+"/auth/login", "", map[string]string{"email": email, "password": password}, &res); err != nil {
 		return nil, fmt.Errorf("sign in as %s at %s: %w", email, gateway, err)
 	}
 	return &session{gateway: gateway, token: res.Token, brand: br}, nil
+}
+
+// safeToSendPassword refuses to send an admin's password in the clear
+// anywhere but this machine: plain http is for a local stack only.
+func safeToSendPassword(gateway string) error {
+	u, err := url.Parse(gateway)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("gateway %q is not a URL like https://api.example.com", gateway)
+	}
+	switch {
+	case u.Scheme == "https":
+		return nil
+	case u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"):
+		return nil
+	}
+	return fmt.Errorf("gateway %s: use https; an admin's password would cross the network in the clear", gateway)
 }
 
 func (s *session) post(path string, body any) error {

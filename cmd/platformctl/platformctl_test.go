@@ -363,6 +363,15 @@ func TestImportSends(t *testing.T) {
 	}
 }
 
+func TestImportWontSendThePasswordInTheClear(t *testing.T) {
+	for gw, ok := range map[string]bool{"https://api.acme.example": true, "http://localhost:18080": true, "http://127.0.0.1:8080": true,
+		"http://api.acme.example": false, "http://10.0.0.5:8080": false, "api.acme.example": false} {
+		if err := safeToSendPassword(gw); (err == nil) != ok {
+			t.Errorf("%s: %v", gw, err)
+		}
+	}
+}
+
 func writePNG(t *testing.T, path string, w, h int) {
 	t.Helper()
 	f, err := os.Create(path)

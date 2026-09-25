@@ -110,9 +110,10 @@ command exit 1.
 The import goes through the gateway's API, so every server rule applies.
 It signs in as an admin: `--email` (default `BOOTSTRAP_ADMIN_EMAIL`), with
 the password in `PLATFORMCTL_PASSWORD` (default `BOOTSTRAP_ADMIN_PASSWORD`),
-at `--gateway` (default `GATEWAY_URL`). Rows that already exist
-(merchants and agents by name, items by name within their merchant) are
-skipped, so a re-run is safe.
+at `--gateway` (default `GATEWAY_URL`). The gateway must be `https://`, or
+plain `http://` on this machine: the password never crosses a network in
+the clear. Rows that already exist (merchants and agents by name, items by
+name within their merchant) are skipped, so a re-run is safe.
 
 ## brand-app
 
