@@ -38,6 +38,17 @@ abstract class AppModule {
 
   /// Tabs the module adds to the merchant board, after the job queue.
   List<MerchantTab> merchantTabs(AppConfig config) => const [];
+
+  /// Links the module adds to the admin overview, to its own screens.
+  List<ModuleLink> adminLinks(AppConfig config) => const [];
+}
+
+/// A link to a module's screen: a route path it adds.
+class ModuleLink {
+  final String label;
+  final String path;
+  final IconData icon;
+  const ModuleLink({required this.label, required this.path, required this.icon});
 }
 
 /// A tab on the merchant board. The label is usually a pack word

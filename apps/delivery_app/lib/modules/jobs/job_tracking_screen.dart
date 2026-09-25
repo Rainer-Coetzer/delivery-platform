@@ -83,7 +83,9 @@ class _JobTrackingScreenState extends ConsumerState<JobTrackingScreen> {
                       TileLayer(
                         urlTemplate: config.brand.map.tilesUrl,
                         maxZoom: config.brand.map.maxZoom.toDouble(),
-                        userAgentPackageName: 'com.example.delivery_app',
+                        // Tile providers identify apps by this; brand-app sets it
+                        // (config/app.json, built with --dart-define-from-file).
+                        userAgentPackageName: const String.fromEnvironment('APP_ID', defaultValue: 'com.example.delivery_app'),
                       ),
                       MarkerLayer(markers: [
                         Marker(

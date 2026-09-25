@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../core/module.dart';
 import '../../core/providers.dart';
 import '../../core/session.dart';
 import '../../l10n/app_localizations.dart';
@@ -44,6 +46,9 @@ class AdminDashboardScreen extends ConsumerWidget {
               Text(l10n.jobsByState(config.title('jobs')), style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               ...byStatus.entries.map((e) => ListTile(title: Text(config.stateLabel(e.key)), trailing: Text('${e.value}'))),
+              // Screens other modules add (a buyer's own, say).
+              for (final link in [for (final m in enabledModules(ref.watch(appModulesProvider), config)) ...m.adminLinks(config)])
+                ListTile(leading: Icon(link.icon), title: Text(link.label), trailing: const Icon(Icons.chevron_right), onTap: () => context.push(link.path)),
             ],
           );
         },
