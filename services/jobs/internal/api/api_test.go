@@ -80,6 +80,7 @@ func TestRouteRoles(t *testing.T) {
 		{"agent lists a merchant's jobs", agent, "GET", "/jobs?merchantId=r1", "", 403},
 		{"customer job without merchant", customer, "POST", "/jobs", `{"paymentMethod":"cash"}`, 400},
 		{"transition without a target", customer, "POST", "/jobs/o1/transitions", `{}`, 400},
+		{"approval on a pack without the module", customer, "POST", "/jobs/o1/facts/approved", ``, 404},
 		{"payment method the pack doesn't take", customer, "POST", "/jobs", `{"merchantId":"r1","paymentMethod":"bitcoin","dropoff":{"lat":-22.5,"lng":17.1}}`, 400}, // else it reaches the (nil) catalogue,
 	}
 	for _, c := range cases {

@@ -565,6 +565,17 @@ func (m *Machine) StateFor(milestone string) (State, bool) {
 	return State{}, false
 }
 
+// RoleFacts lists the facts role may set (`by:`) that aren't set yet.
+func (m *Machine) RoleFacts(facts map[string]bool, role string) []string {
+	var out []string
+	for _, f := range m.Facts {
+		if slices.Contains(f.By, role) && !facts[f.Name] {
+			out = append(out, f.Name)
+		}
+	}
+	return out
+}
+
 // RoleTargets lists the states role may move a job in state to.
 func (m *Machine) RoleTargets(state, role string) []string {
 	var out []string

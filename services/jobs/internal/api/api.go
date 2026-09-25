@@ -52,6 +52,7 @@ func (a *API) Routes(r chi.Router) {
 		r.With(auth.RequireRole(auth.RoleCustomer)).Post("/", a.createJob)
 		r.Get("/{id}", a.getJob)
 		r.Post("/{id}/transitions", a.transition)
+		r.Post("/{id}/facts/{fact}", a.setFact)
 		r.Get("/", a.listJobs)
 	})
 }
@@ -266,8 +267,19 @@ func (a *API) getJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Forbidden(w, "this isn't your job")
 		return
 	}
-	job.Actions = a.Pack.Lifecycle.RoleTargets(job.Status, string(caller.Role))
+	a.fillActions(job, caller)
 	httpx.WriteJSON(w, http.StatusOK, job)
+}
+
+// fillActions tells the caller what they may do with the job next.
+func (a *API) fillActions(job *domain.Job, caller *auth.Claims) {
+	if job.Terminal() {
+		return
+	}
+	job.Actions = a.Pack.Lifecycle.RoleTargets(job.Status, string(caller.Role))
+	if a.Pack.Has(packs.ModApproval) {
+		job.CanSet = a.Pack.Lifecycle.RoleFacts(job.Facts, string(caller.Role))
+	}
 }
 
 type transitionRequest struct {
@@ -286,9 +298,41 @@ func (a *API) transition(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, `body must be {"to": "<state>", "reason": "..."}`)
 		return
 	}
+	a.personMove(w, r, caller, func(job *domain.Job) ([]lifecycle.Step, string, error) {
+		steps, err := job.Apply(a.Pack.Lifecycle, lifecycle.Trigger{Role: string(caller.Role), To: req.To}, req.Reason)
+		return steps, "a " + string(caller.Role) + " can't move this job from " + job.Status + " to " + req.To, err
+	})
+}
+
+// setFact is the approval module: a person vouching for a fact the pack's
+// lifecycle lets their role set (a pharmacist approving an order, an agent
+// confirming an ID check). Setting it may unlock automatic transitions.
+func (a *API) setFact(w http.ResponseWriter, r *http.Request) {
+	if !a.Pack.Has(packs.ModApproval) {
+		httpx.NotFound(w, "this platform has no approvals")
+		return
+	}
+	caller := auth.MustFromContext(r.Context())
+	fact := chi.URLParam(r, "fact")
+	a.personMove(w, r, caller, func(job *domain.Job) ([]lifecycle.Step, string, error) {
+		if job.Terminal() {
+			return nil, "this job has finished", lifecycle.ErrNoTransition
+		}
+		if job.Facts[fact] {
+			return nil, fact + " is already set", lifecycle.ErrNoTransition
+		}
+		steps, err := job.SetFact(a.Pack.Lifecycle, fact, string(caller.Role))
+		return steps, "a " + string(caller.Role) + " can't set " + fact, err
+	})
+}
+
+// personMove loads the job for update, checks the caller may see it, runs
+// move, and saves and publishes whatever it did. move returns the message
+// to answer with if the lifecycle refuses (409).
+func (a *API) personMove(w http.ResponseWriter, r *http.Request, caller *auth.Claims, move func(*domain.Job) ([]lifecycle.Step, string, error)) {
 	ctx := r.Context()
-	m := a.Pack.Lifecycle
 	var job *domain.Job
+	var refusal string
 	err := a.Pool.WithTx(ctx, func(tx pgx.Tx) error {
 		var err error
 		if job, err = store.GetForUpdate(ctx, tx, chi.URLParam(r, "id")); err != nil {
@@ -297,8 +341,8 @@ func (a *API) transition(w http.ResponseWriter, r *http.Request) {
 		if !CanView(caller, job) {
 			return errNotYours
 		}
-		steps, err := job.Apply(m, lifecycle.Trigger{Role: string(caller.Role), To: req.To}, req.Reason)
-		if err != nil {
+		var steps []lifecycle.Step
+		if steps, refusal, err = move(job); err != nil {
 			return err
 		}
 		if err := store.Save(ctx, tx, job, steps); err != nil {
@@ -312,13 +356,12 @@ func (a *API) transition(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, errNotYours):
 		httpx.Forbidden(w, "this isn't your job")
 	case errors.Is(err, lifecycle.ErrNoTransition):
-		httpx.WriteError(w, http.StatusConflict, "not_allowed",
-			"a "+string(caller.Role)+" can't move this job from "+job.Status+" to "+req.To)
+		httpx.WriteError(w, http.StatusConflict, "not_allowed", refusal)
 	case err != nil:
-		a.Log.Error("transition job", "error", err)
+		a.Log.Error("update job", "path", r.URL.Path, "error", err)
 		httpx.Internal(w, "could not update job")
 	default:
-		job.Actions = m.RoleTargets(job.Status, string(caller.Role))
+		a.fillActions(job, caller)
 		httpx.WriteJSON(w, http.StatusOK, job)
 	}
 }

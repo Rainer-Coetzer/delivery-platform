@@ -56,9 +56,11 @@ type Job struct {
 	CancelReason     string          `json:"cancelReason,omitempty"`
 	CreatedAt        time.Time       `json:"createdAt"`
 	UpdatedAt        time.Time       `json:"updatedAt"`
-	// Actions are the states the caller may move this job to (lifecycle
-	// transitions with `by:` their role). Filled in per request by the API.
+	// Actions are the states the caller may move this job to, and CanSet the
+	// facts they may vouch for (lifecycle `by:` their role). Filled in per
+	// request by the API, so the app never hardcodes who may do what.
 	Actions []string `json:"actions,omitempty"`
+	CanSet  []string `json:"canSet,omitempty"`
 }
 
 // Apply runs trigger through the pack's machine and, if it moved or set a
@@ -72,6 +74,18 @@ func (j *Job) Apply(m *lifecycle.Machine, t lifecycle.Trigger, reason string) ([
 	}
 	j.Facts = facts
 	j.follow(steps, reason)
+	return steps, nil
+}
+
+// SetFact records a fact a person in role vouches for (an approval, an ID
+// check) and takes any automatic transitions it unlocks.
+func (j *Job) SetFact(m *lifecycle.Machine, fact, role string) ([]lifecycle.Step, error) {
+	steps, facts, err := m.SetFact(j.Status, j.Facts, fact, role)
+	if err != nil {
+		return nil, err
+	}
+	j.Facts = facts
+	j.follow(steps, "")
 	return steps, nil
 }
 

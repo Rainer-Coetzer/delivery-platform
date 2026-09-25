@@ -217,3 +217,31 @@ func TestSettleEventsReacts(t *testing.T) {
 		t.Fatal("Reacts should follow Events")
 	}
 }
+
+func TestRoleFacts(t *testing.T) {
+	m, err := Load([]byte(`schema: 1
+initial: NEW
+states:
+  - { name: NEW, milestone: created }
+  - { name: DONE, milestone: completed, terminal: true }
+  - { name: GONE, milestone: cancelled, terminal: true }
+facts:
+  approved: { by: [merchant, admin] }
+  paid: { on: payments.completed }
+transitions:
+  - { from: NEW, to: DONE, auto: true, when: [approved, paid] }
+  - { from: "*", to: GONE, by: [admin] }
+`), known)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.RoleFacts(nil, "merchant"); len(got) != 1 || got[0] != "approved" {
+		t.Fatalf("merchant may set approved: %v", got)
+	}
+	if got := m.RoleFacts(map[string]bool{"approved": true}, "merchant"); len(got) != 0 {
+		t.Fatalf("already set: %v", got)
+	}
+	if got := m.RoleFacts(nil, "customer"); len(got) != 0 {
+		t.Fatalf("event facts are nobody's to set: %v", got)
+	}
+}

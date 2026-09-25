@@ -87,6 +87,7 @@ type Pack struct {
 	Job         JobShape                     `yaml:"job"`
 	Strategies  Strategies                   `yaml:"strategies"`
 	Terminology map[string]map[string]string `yaml:"terminology"` // locale -> key -> word
+	Settings    Settings                     `yaml:"settings"`
 
 	Lifecycle *lifecycle.Machine `yaml:"-"`
 }
@@ -136,6 +137,9 @@ func Load(fsys fs.FS, name string, known lifecycle.Known) (*Pack, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pack %q: lifecycle.yaml: %w", name, err)
 	}
+	if err := p.validateFacts(); err != nil {
+		return nil, fmt.Errorf("pack %q: %w", name, err)
+	}
 	return &p, nil
 }
 
@@ -183,11 +187,7 @@ func (p *Pack) validate(dir string, known lifecycle.Known) error {
 	if len(p.Job.Proof) > 0 && !p.Has(ModProof) {
 		add("job.proof is set but the proof module isn't enabled")
 	}
-	for kind, proof := range p.Job.Proof {
-		if !slices.Contains([]string{"photo", "signature", "pin", "id_check"}, proof) {
-			add("job.proof.%s: %q (valid: photo, signature, pin, id_check)", kind, proof)
-		}
-	}
+	p.validateSettings(add)
 	if p.Strategies.Pricing.Name == "" || p.Strategies.Dispatch.Name == "" || p.Strategies.ETA.Name == "" || len(p.Strategies.Payment) == 0 {
 		add("strategies: pricing, dispatch, eta and at least one payment are required")
 	}

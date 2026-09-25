@@ -78,6 +78,9 @@ strategies:
   payment: [ { name: cash } ]
 terminology:
   en: { job: delivery }
+settings:
+  packages: { max_lines: 10, max_quantity: 5, max_weight_g: 30000, max_dimension_mm: 1500, max_declared_value_cents: 1000000 }
+  proof: { pin_attempts: 5, max_photo_bytes: 5000000 }
 `
 
 func TestLoad_Invalid(t *testing.T) {
@@ -92,6 +95,11 @@ func TestLoad_Invalid(t *testing.T) {
 		{"lines need their module", strings.Replace(goodPack, "[packages, proof]", "[proof]", 1), "packages needs the packages module"},
 		{"proof needs module", strings.Replace(goodPack, "[packages, proof]", "[packages]", 1), "proof module isn't enabled"},
 		{"bad proof kind", strings.Replace(goodPack, "dropoff: photo", "dropoff: selfie", 1), `"selfie"`},
+		{"proof on a stop kind that doesn't exist", strings.Replace(goodPack, "dropoff: photo", "doorstep: photo", 1), `"doorstep" is not a stop kind`},
+		{"module without its settings", strings.Replace(goodPack, "  proof: { pin_attempts: 5, max_photo_bytes: 5000000 }\n", "", 1), "the proof module needs settings.proof"},
+		{"settings without the module", goodPack + "  multi-stop: { max_stops: 5 }\n", "settings.multi-stop is set but the multi-stop module isn't enabled"},
+		{"a zero limit", strings.Replace(goodPack, "max_weight_g: 30000", "max_weight_g: 0", 1), "settings.packages.max_weight_g must be > 0"},
+		{"settings typo", strings.Replace(goodPack, "pin_attempts", "pin_attempt", 1), "field pin_attempt not found"},
 		{"multi_stop needs module", strings.Replace(goodPack, "stops: point_to_point", "stops: multi_stop", 1), "multi_stop needs the multi-stop module"},
 		{"unknown role", strings.Replace(goodPack, "[customer, agent, admin]", "[customer, pilot]", 1), `unknown role "pilot"`},
 		{"strategies required", strings.Replace(goodPack, "  dispatch: { name: nearest }\n", "", 1), "strategies: pricing, dispatch, eta"},
@@ -120,5 +128,26 @@ func TestLoad_Invalid(t *testing.T) {
 	}
 	if _, err := Load(fstest.MapFS{}, "missing", known); err == nil || !strings.Contains(err.Error(), "available:") {
 		t.Fatalf("a missing pack should list what's available, got %v", err)
+	}
+}
+
+func TestApprovalModuleNeedsARoleSetFact(t *testing.T) {
+	withFact := strings.Replace(goodLifecycle, "transitions:", "facts:\n  approved: { by: [admin] }\ntransitions:", 1)
+	cases := []struct{ name, pack, lifecycle, want string }{
+		{"role-set fact without the module", goodPack, withFact, "needs the approval module"},
+		{"module without a role-set fact", strings.Replace(goodPack, "[packages, proof]", "[packages, proof, approval]", 1), goodLifecycle, "approval module is enabled but"},
+		{"both", strings.Replace(goodPack, "[packages, proof]", "[packages, proof, approval]", 1), withFact, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fsys := fstest.MapFS{"test/pack.yaml": {Data: []byte(c.pack)}, "test/lifecycle.yaml": {Data: []byte(c.lifecycle)}}
+			_, err := Load(fsys, "test", known)
+			if c.want == "" && err != nil {
+				t.Fatal(err)
+			}
+			if c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+				t.Fatalf("want %q, got %v", c.want, err)
+			}
+		})
 	}
 }
