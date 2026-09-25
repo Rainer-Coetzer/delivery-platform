@@ -24,7 +24,7 @@ import (
 func setup(t *testing.T) (*Handlers, *db.Pool, *store.Store, string, string) {
 	t.Helper()
 	pool := dbtest.New(t, migrations.FS)
-	st := store.New(pool)
+	st := store.New(pool, "default")
 	ctx := context.Background()
 	m := &domain.Merchant{ID: uuid.NewString(), Name: "Kapana", Lat: -22.56, Lng: 17.07, Timezone: "Africa/Windhoek", IsOpen: true}
 	if err := st.CreateMerchant(ctx, m); err != nil {

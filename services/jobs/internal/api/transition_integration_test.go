@@ -27,7 +27,7 @@ import (
 func storedJob(t *testing.T, pool *db.Pool, status, milestone string) string {
 	t.Helper()
 	j := &domain.Job{
-		ID: uuid.NewString(), Pack: "food", CustomerID: "c1", CustomerName: "C", MerchantID: "m1", MerchantName: "Kapana",
+		ID: uuid.NewString(), TenantID: "default", Pack: "food", CustomerID: "c1", CustomerName: "C", MerchantID: "m1", MerchantName: "Kapana",
 		Status: status, Milestone: milestone, Facts: map[string]bool{}, PaymentMethod: "card",
 		Stops: []domain.Stop{
 			{Stop: events.Stop{Seq: 0, Kind: events.StopPickup, MerchantID: "m1"}},

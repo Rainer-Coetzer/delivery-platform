@@ -24,6 +24,7 @@ func newModule(d app.Deps) (*app.Module, error) {
 		Pool: d.Pool, Store: store.New(d.Pool), Log: d.Log, Auth: d.Auth, Pack: d.Pack,
 		Pricing: d.Strategies.Pricing, Payments: d.Strategies.Payments, Blobs: d.Blobs,
 		InArea:    d.Brand.InServiceArea,
+		Tenant:    d.Brand.TenantID,
 		Catalogue: catalogue.New(d.URL("merchant"), d.HTTP),
 	}
 	return &app.Module{

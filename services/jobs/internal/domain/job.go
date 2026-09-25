@@ -51,6 +51,7 @@ type Stop struct {
 // pkg/events.
 type Job struct {
 	ID           string `json:"id"`
+	TenantID     string `json:"-"` // config/brand.yaml tenant_id; docs/MULTI_TENANCY.md
 	Pack         string `json:"pack"`
 	CustomerID   string `json:"customerId"`
 	CustomerName string `json:"customerName"`

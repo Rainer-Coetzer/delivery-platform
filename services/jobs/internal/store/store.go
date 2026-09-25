@@ -37,10 +37,10 @@ func Create(ctx context.Context, tx pgx.Tx, j *domain.Job, initial string, settl
 	_, err = tx.Exec(ctx, `
 		INSERT INTO jobs (
 			id, pack, customer_id, customer_name, merchant_id, merchant_name, status, milestone, facts,
-			subtotal_cents, delivery_fee_cents, surge_multiplier, total_cents, payment_method
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+			subtotal_cents, delivery_fee_cents, surge_multiplier, total_cents, payment_method, tenant_id
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
 		j.ID, j.Pack, j.CustomerID, j.CustomerName, nullStr(j.MerchantID), nullStr(j.MerchantName), j.Status, j.Milestone, facts,
-		j.SubtotalCents, j.DeliveryFeeCents, j.SurgeMultiplier, j.TotalCents, j.PaymentMethod)
+		j.SubtotalCents, j.DeliveryFeeCents, j.SurgeMultiplier, j.TotalCents, j.PaymentMethod, j.TenantID)
 	if err != nil {
 		return fmt.Errorf("insert job: %w", err)
 	}

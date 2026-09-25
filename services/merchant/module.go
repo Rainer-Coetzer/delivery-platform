@@ -37,7 +37,7 @@ func newModule(d app.Deps) (*app.Module, error) {
 		d.Log.Info("catalogue module off in this pack: merchant module idle", "pack", d.Pack.Name)
 		return &app.Module{}, nil
 	}
-	st := store.New(d.Pool)
+	st := store.New(d.Pool, d.Brand.TenantID)
 	h := &consumers.Handlers{Pool: d.Pool, Log: d.Log}
 	m := &app.Module{
 		Routes:    (&api.API{Pool: d.Pool, Store: st, Log: d.Log, Auth: d.Auth, DefaultTimezone: d.Brand.Timezone}).Routes,

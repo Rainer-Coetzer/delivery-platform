@@ -18,15 +18,20 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
-type Store struct{ pool *db.Pool }
+type Store struct {
+	pool   *db.Pool
+	tenant string
+}
 
-func New(pool *db.Pool) *Store { return &Store{pool: pool} }
+// New is a store for tenant: every merchant it creates belongs to it
+// (config/brand.yaml tenant_id; docs/MULTI_TENANCY.md).
+func New(pool *db.Pool, tenant string) *Store { return &Store{pool: pool, tenant: tenant} }
 
 func (s *Store) CreateMerchant(ctx context.Context, r *domain.Merchant) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO merchants (id, name, lat, lng, opens_at, closes_at, timezone, is_open)
-		VALUES ($1,$2,$3,$4, make_interval(mins => $5), make_interval(mins => $6), $7, $8)`,
-		r.ID, r.Name, r.Lat, r.Lng, r.OpensAt.Minutes(), r.ClosesAt.Minutes(), r.Timezone, r.IsOpen)
+		INSERT INTO merchants (id, name, lat, lng, opens_at, closes_at, timezone, is_open, tenant_id)
+		VALUES ($1,$2,$3,$4, make_interval(mins => $5), make_interval(mins => $6), $7, $8, $9)`,
+		r.ID, r.Name, r.Lat, r.Lng, r.OpensAt.Minutes(), r.ClosesAt.Minutes(), r.Timezone, r.IsOpen, s.tenant)
 	if err != nil {
 		return fmt.Errorf("insert merchant: %w", err)
 	}

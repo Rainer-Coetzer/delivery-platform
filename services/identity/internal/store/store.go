@@ -24,14 +24,19 @@ type User struct {
 	RefID        string
 }
 
-type Store struct{ pool *db.Pool }
+type Store struct {
+	pool   *db.Pool
+	tenant string
+}
 
-func New(pool *db.Pool) *Store { return &Store{pool: pool} }
+// New is a store for tenant: every account it creates belongs to it
+// (config/brand.yaml tenant_id; docs/MULTI_TENANCY.md).
+func New(pool *db.Pool, tenant string) *Store { return &Store{pool: pool, tenant: tenant} }
 
 func (s *Store) CreateUser(ctx context.Context, u *User) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO users (id, name, email, password_hash, role, ref_id) VALUES ($1,$2,$3,$4,$5,$6)`,
-		u.ID, u.Name, u.Email, u.PasswordHash, u.Role, nullStr(u.RefID))
+		INSERT INTO users (id, name, email, password_hash, role, ref_id, tenant_id) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		u.ID, u.Name, u.Email, u.PasswordHash, u.Role, nullStr(u.RefID), s.tenant)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrDuplicateEmail

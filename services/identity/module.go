@@ -28,7 +28,7 @@ var Definition = app.Definition{
 }
 
 func newModule(d app.Deps) (*app.Module, error) {
-	st := store.New(d.Pool)
+	st := store.New(d.Pool, d.Brand.TenantID)
 	if err := bootstrapAdmin(context.Background(), st, d.Log); err != nil {
 		return nil, fmt.Errorf("bootstrap admin: %w", err)
 	}

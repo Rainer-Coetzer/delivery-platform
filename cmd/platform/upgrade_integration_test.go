@@ -27,6 +27,7 @@ import (
 // new binary with its data intact. Each case migrates a module to its last
 // pre-rename version under its old schema name, writes old-shaped rows,
 // boots the new migrations, and reads the rows back under the new names.
+// Rows from before Phase D come back with the default tenant_id.
 func TestUpgradeFromPreRenameSchemas(t *testing.T) {
 	cases := []struct {
 		def       app.Definition
@@ -42,8 +43,8 @@ func TestUpgradeFromPreRenameSchemas(t *testing.T) {
 			         ('u1', 'D', 'd@example.com', 'x', 'driver', 'a1'), ('u2', 'R', 'r@example.com', 'x', 'restaurant', 'm1');
 			       INSERT INTO order_history (order_id, customer_id, restaurant_name, status, total_cents, created_at)
 			         VALUES ('j1', 'c1', 'Kapana', 'DELIVERED', 900, now());`,
-			check: `SELECT string_agg(role, ',' ORDER BY id) || '|' || (SELECT merchant_name FROM job_history WHERE job_id = 'j1') FROM users`,
-			want:  "agent,merchant|Kapana",
+			check: `SELECT string_agg(role, ',' ORDER BY id) || '|' || (SELECT merchant_name FROM job_history WHERE job_id = 'j1') || '|' || string_agg(DISTINCT tenant_id, ',') FROM users`,
+			want:  "agent,merchant|Kapana|default",
 		},
 		{
 			def: merchant.Definition, oldSchema: "restaurant", before: 4,
@@ -51,9 +52,9 @@ func TestUpgradeFromPreRenameSchemas(t *testing.T) {
 			       INSERT INTO menu_items (id, restaurant_id, name, price_cents, stock_qty) VALUES ('i1', 'm1', 'Platter', 6500, 3);
 			       INSERT INTO restaurant_orders (order_id, restaurant_id, items, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng)
 			         VALUES ('j1', 'm1', '[{"menuItemId":"i1","name":"Platter","quantity":2,"unitPriceCents":6500}]', 0, 0, 0, 0);`,
-			check: `SELECT (SELECT merchant_id FROM catalogue_items WHERE id = 'i1') || '|' || (items -> 0 ->> 'catalogueItemId') || '|' || ((items -> 0) ? 'menuItemId')::text
+			check: `SELECT (SELECT merchant_id FROM catalogue_items WHERE id = 'i1') || '|' || (items -> 0 ->> 'catalogueItemId') || '|' || ((items -> 0) ? 'menuItemId')::text || '|' || (SELECT tenant_id FROM merchants WHERE id = 'm1')
 			        FROM merchant_jobs WHERE job_id = 'j1' AND merchant_id = 'm1'`,
-			want: "m1|i1|false",
+			want: "m1|i1|false|default",
 		},
 		{
 			def: jobs.Definition, oldSchema: "orders", before: 2,
@@ -69,9 +70,9 @@ func TestUpgradeFromPreRenameSchemas(t *testing.T) {
 			               (SELECT string_agg(catalogue_item_id, ',' ORDER BY id) FROM job_lines WHERE job_id = 'j1') || '|' ||
 			               (SELECT to_status FROM job_events WHERE job_id = 'j1') || '|' ||
 			               (SELECT string_agg(seq || kind || lat || coalesce(label, '-') || coalesce(merchant_id, '-') || (completed_at IS NOT NULL), ',' ORDER BY seq)
-			                FROM job_stops WHERE job_id = 'j1')
+			                FROM job_stops WHERE job_id = 'j1') || '|' || tenant_id
 			        FROM jobs WHERE id = 'j1'`,
-			want: "m1|a1|food|in_transit|truetrue|i1,i2|CONFIRMED|0pickup-22.5Kapanam1true,1dropoff-22.6--false",
+			want: "m1|a1|food|in_transit|truetrue|i1,i2|CONFIRMED|0pickup-22.5Kapanam1true,1dropoff-22.6--false|default",
 		},
 		{
 			def: payment.Definition, oldSchema: "", before: 2,

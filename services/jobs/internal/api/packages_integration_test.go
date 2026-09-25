@@ -71,7 +71,7 @@ func TestPointToPointWithPackages(t *testing.T) {
 	pool := dbtest.New(t, migrations.FS)
 	a := &API{Pool: pool, Store: store.New(pool), Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Auth: as(&auth.Claims{UserID: "c1", Name: "Nangula", Role: auth.RoleCustomer}),
-		Pack: p, Pricing: strategies.Pricing, Payments: strategies.Payments}
+		Pack: p, Pricing: strategies.Pricing, Payments: strategies.Payments, Tenant: "acme"}
 	r := chi.NewRouter()
 	a.Routes(r)
 	post := func(body string) (int, string) {
@@ -119,6 +119,10 @@ func TestPointToPointWithPackages(t *testing.T) {
 	stored, err := store.New(pool).Get(context.Background(), j.ID)
 	if err != nil || stored.Items[1].DeclaredValueCents != 1500000 || stored.Items[1].Kind != domain.LinePackage {
 		t.Fatalf("package lines persist: %+v %v", stored.Items, err)
+	}
+	var tenant string
+	if err := pool.QueryRow(context.Background(), `SELECT tenant_id FROM jobs WHERE id = $1`, j.ID).Scan(&tenant); err != nil || tenant != "acme" {
+		t.Fatalf("the job carries the brand's tenant: %q %v", tenant, err)
 	}
 
 	// Outside the brand's service area.

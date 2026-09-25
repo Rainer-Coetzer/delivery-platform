@@ -49,6 +49,8 @@ type API struct {
 	// InArea reports whether a point is in the brand's service area; nil
 	// means everywhere (tests).
 	InArea func(lat, lng float64) bool
+	// Tenant is the install's tenant (config/brand.yaml); every job gets it.
+	Tenant string
 	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
 	Auth func(http.Handler) http.Handler
 }
@@ -215,6 +217,7 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 	m := a.Pack.Lifecycle
 	job := &domain.Job{
 		ID:               jobID,
+		TenantID:         a.tenant(),
 		Pack:             a.Pack.Name,
 		CustomerID:       caller.UserID,
 		CustomerName:     caller.Name,
@@ -332,6 +335,13 @@ func (a *API) planPointToPoint(req createJobRequest) (*jobPlan, *requestError) {
 			{Stop: events.Stop{Seq: 1, Kind: events.StopDropoff, Location: req.Dropoff}},
 		},
 	}, nil
+}
+
+func (a *API) tenant() string {
+	if a.Tenant == "" {
+		return "default"
+	}
+	return a.Tenant
 }
 
 // assumedFreeAgents stands in for the real count of free agents in the

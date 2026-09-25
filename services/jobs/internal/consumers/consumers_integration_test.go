@@ -39,7 +39,7 @@ func setup(t *testing.T) (*Handlers, *db.Pool) {
 func newJob(t *testing.T, pool *db.Pool) string {
 	t.Helper()
 	j := &domain.Job{
-		ID: uuid.NewString(), Pack: "food", CustomerID: "c1", CustomerName: "C", MerchantID: "m1", MerchantName: "Kapana",
+		ID: uuid.NewString(), TenantID: "default", Pack: "food", CustomerID: "c1", CustomerName: "C", MerchantID: "m1", MerchantName: "Kapana",
 		Status: "CREATED", Milestone: lifecycle.Created, Facts: map[string]bool{}, PaymentMethod: "card",
 		Items: []domain.Item{{Kind: domain.LineCatalogue, CatalogueItemID: "i1", Name: "Platter", Quantity: 2, UnitPriceCents: 6500}},
 		Stops: []domain.Stop{
