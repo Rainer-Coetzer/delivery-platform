@@ -214,7 +214,7 @@ words, it's config.
 - **Harder:** the rename touches every service, event, API path and Flutter
   screen at once (Phase C). The milestone spine must stay small and stable;
   adding one is a core change that every pack inherits.
-- **Later** (not built until a pilot needs it):
+- **Later** (not built unless asked; listed in the product brief's "Later"):
   - relay jobs across several agents with hand-offs mid-leg
   - pooling several jobs into one route (route optimisation)
   - marketplace search across merchants

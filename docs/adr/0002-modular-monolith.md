@@ -1,4 +1,4 @@
-# ADR-0002: One binary per client, modules inside, the bus behind an interface
+# ADR-0002: Deployment modes. One binary by default, microservices to scale
 
 **Status:** Accepted
 **Date:** 2026-09-24
@@ -6,18 +6,20 @@
 
 ## Context
 
-The product changed. This is no longer one food-delivery app. It becomes a
-white-label logistics platform that is **hosted once per client** on a small
-VPS and billed by the month or per job. Three constraints follow:
+The product changed. This is no longer one food-delivery app. It is a
+white-label logistics platform **sold as source code**: buyers rebrand it,
+configure a vertical, and run it on their own infrastructure. Three constraints follow:
 
-- **Cheap to run per client.** Today's stack is 8 Go services, Kafka (a JVM),
-  Postgres, Kafka UI, Prometheus, Grafana and Jaeger. Kafka alone wants about
-  1 GB of RAM. The pilot target is **under 1 GB idle for everything**.
+- **Cheap for the buyer to run.** Today's stack is 8 Go services, Kafka (a
+  JVM), Postgres, Kafka UI, Prometheus, Grafana and Jaeger. Kafka alone
+  wants about 1 GB of RAM. The default deployment's target is **under 1 GB
+  idle for everything**, so it fits a small VPS.
 - **Reliable with real jobs and real money.** At-least-once delivery,
   idempotent consumers and a transactional outbox already exist and must
   survive the change (`pkg/outbox`, `pkg/db.InsertIfNew`).
-- **Easy to operate for one person.** One process to deploy, watch and roll
-  back beats nine.
+- **Easy for the buyer's developer to operate.** One process to deploy,
+  watch and roll back beats nine. The microservice shape stays available
+  as the "scale" option.
 
 What the code shows today:
 
@@ -63,12 +65,13 @@ What the code shows today:
    enabled and `EVENTS_BUS=kafka`. The microservice deployment stays
    *possible* and CI compiles it, but only the monolith is e2e-gated (see
    Consequences).
-6. **Compose profiles:** `pilot` (platform binary, Postgres/PostGIS and Caddy)
-   and `full` (today's services, Kafka and observability).
+6. **Compose profiles:** `lite` (platform binary, Postgres/PostGIS and Caddy,
+   the default) and `full` (today's services, Kafka and observability, the
+   scale option).
 
 ## Options considered
 
-### Option A: keep 8 microservices + Kafka per client
+### Option A: microservices + Kafka as the only mode
 
 | Dimension | Assessment |
 |---|---|
@@ -78,8 +81,8 @@ What the code shows today:
 | Cost | Needs a 4 GB VPS at minimum |
 
 **Pros:** no change, and it scales out if a client ever grows large.
-**Cons:** you pay the cost of distribution for load no pilot client will
-have. Kafka is the single biggest RAM and ops cost.
+**Cons:** every buyer pays the cost of distribution, whether or not they
+have the load. Kafka is the single biggest RAM and ops cost.
 
 ### Option B: modular monolith, in-process bus on Postgres (chosen)
 
@@ -122,17 +125,18 @@ weeks. The event contract (`pkg/events`) is the asset worth keeping.
 - **"Per-service entry points still build" has a price.** Two deployment
   shapes means two things that can rot. We accept compile-level support plus
   the shared bus contract suite for the microservice shape, and do not run
-  its e2e on every change. If it's never used, delete it at Phase F.
+  its e2e on every change. It is the buyer's scale option, so the release
+  gate (Phase F) runs its e2e once per release.
 
 ## Consequences
 
-- **Easier:** hosting a client is `compose --profile pilot up` on one small
-  VPS. Backups are one `pg_dump`. Logs, deploys and rollbacks are one binary.
+- **Easier:** a buyer's deployment is `compose --profile lite up` on one
+  small VPS. Backups are one `pg_dump`. Logs, deploys and rollbacks are one binary.
 - **Harder:** a runaway query in one module can starve others, since they
   share a database and a process. Mitigate with per-module pool size limits
   and statement timeouts.
-- **Ceiling:** the Postgres log is sized for one client's dispatch volume
-  (low thousands of events per minute). A client beyond that moves to the
+- **Ceiling:** the Postgres log is sized for one business's dispatch volume
+  (low thousands of events per minute). A buyer beyond that moves to the
   `full` profile (Kafka) without code changes, because the bus is an
   interface.
 - **Revisit:** `bus.log` retention (prune rows every group has committed and
@@ -141,7 +145,7 @@ weeks. The event contract (`pkg/events`) is the asset worth keeping.
 
 ## Measured (Phase B, 24 September 2026)
 
-`pilot` profile, seeded, after one completed e2e order, then 5 minutes
+`lite` profile (then called `pilot`), seeded, after one completed e2e order, then 5 minutes
 idle (`docker stats`, Docker Desktop on Windows, Postgres 16 + PostGIS,
 dev settings):
 
@@ -183,5 +187,5 @@ What building it surfaced, each now a regression test:
    A `pg_dump` per service into its schema is the documented path if that
    ever changes.
 4. [x] In-memory RoundTripper for inter-module HTTP.
-5. [x] Compose `pilot` (platform, Postgres, Caddy) and `full` profiles;
+5. [x] Compose `lite` (platform, Postgres, Caddy) and `full` profiles;
    measure idle RAM and write the number down.

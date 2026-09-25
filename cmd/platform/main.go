@@ -1,7 +1,7 @@
 // Command platform runs every module in one process (ADR-0002): one
 // Postgres database with a schema per module, the in-process events bus,
 // and in-memory HTTP between modules. This is what a client's VPS runs
-// (compose `pilot` profile).
+// (compose `lite` profile).
 //
 // PLATFORM_MODULES limits which modules start (comma-separated names);
 // by default all of them do. A disabled module's routes return 404.

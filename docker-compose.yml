@@ -2,8 +2,8 @@ name: delivery-platform
 
 # Two deployment shapes (ADR-0002). Pick one with --profile:
 #
-#   pilot  one platform binary + Postgres/PostGIS + Caddy. What a client's
-#          VPS runs. Default for scripts/e2e.sh.
+#   lite   one platform binary + Postgres/PostGIS + Caddy. The default
+#          deployment: fits a small VPS. Default for scripts/e2e.sh.
 #   full   the eight microservices + Kafka + observability (Prometheus,
 #          Grafana, Jaeger). Same code, EVENTS_BUS=kafka.
 #   web    the Flutter web build behind nginx (combine with either).
@@ -73,10 +73,10 @@ services:
       # Failures during first-boot init don't count towards retries.
       start_period: 120s
 
-  # --- pilot: the platform binary behind Caddy ---
+  # --- lite: the platform binary behind Caddy ---
 
   platform:
-    profiles: ["pilot"]
+    profiles: ["lite"]
     build: { context: ., args: { CMD: ./cmd/platform } }
     environment:
       <<: *app-env
@@ -95,7 +95,7 @@ services:
     restart: unless-stopped
 
   caddy:
-    profiles: ["pilot"]
+    profiles: ["lite"]
     image: caddy:2.10-alpine
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
@@ -104,7 +104,7 @@ services:
       - caddy_data:/data # certificates: keep across restarts or hit Let's Encrypt rate limits
     ports:
       # Locally the gateway URL is http://localhost:${GATEWAY_HOST_PORT}. On a
-      # client VPS set GATEWAY_HOST_PORT=80 and HTTPS_HOST_PORT=443.
+      # server set GATEWAY_HOST_PORT=80 and HTTPS_HOST_PORT=443.
       - "${GATEWAY_HOST_PORT:-8080}:80"
       - "${HTTPS_HOST_PORT:-8443}:443"
     depends_on:

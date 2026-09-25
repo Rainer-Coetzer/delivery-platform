@@ -27,15 +27,15 @@ There are two deployment shapes of the same code
 
 | Profile | What runs | Use it for |
 |---|---|---|
-| `pilot` | `cmd/platform` (every module in one process) + Postgres/PostGIS + Caddy. In-process events bus in Postgres. About 126 MiB idle. | a client's VPS; the default everywhere |
+| `lite` | `cmd/platform` (every module in one process) + Postgres/PostGIS + Caddy. In-process events bus in Postgres. About 126 MiB idle. | a client's VPS; the default everywhere |
 | `full` | the eight services + Kafka + Prometheus/Grafana/Jaeger | the microservice shape; Kafka work |
 
-**One command, end to end.** This builds and starts the `pilot` stack with
+**One command, end to end.** This builds and starts the `lite` stack with
 the demo autopilot on, seeds demo data, places an order through the gateway
 and waits for `DELIVERED`:
 
 ```bash
-./scripts/e2e.sh                    # pilot
+./scripts/e2e.sh                    # lite
 E2E_PROFILE=full ./scripts/e2e.sh   # microservices + Kafka
 ```
 
@@ -43,11 +43,11 @@ E2E_PROFILE=full ./scripts/e2e.sh   # microservices + Kafka
 
 ```bash
 cp .env.example .env
-docker compose --profile pilot -f docker-compose.yml -f docker-compose.dev.yml up --build
+docker compose --profile lite -f docker-compose.yml -f docker-compose.dev.yml up --build
 ./infra/seed/seed.sh
 ```
 
-The gateway is on http://localhost:8080 (Caddy in `pilot`, the gateway
+The gateway is on http://localhost:8080 (Caddy in `lite`, the gateway
 service in `full`). If something already uses 8080, set
 `GATEWAY_HOST_PORT=18080` and `GATEWAY_URL=http://localhost:18080`.
 
@@ -126,7 +126,7 @@ source of truth for every topic and payload shape.
 ## Repo layout
 
 ```
-cmd/platform    every module in one binary (the pilot deployment)
+cmd/platform    every module in one binary (the lite deployment)
 pkg/            shared: app (service kit), events + events/bus, kafka, outbox, db, httpx, auth, obs, config
 services/       one folder per module (see table above), each with module.go + cmd/
 apps/delivery_app/  Flutter client

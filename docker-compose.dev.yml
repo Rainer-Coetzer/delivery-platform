@@ -2,7 +2,7 @@
 # pressing buttons, speeds up the simulated drivers, and bootstraps a dev
 # admin. Works with either profile:
 #
-#   docker compose --profile pilot -f docker-compose.yml -f docker-compose.dev.yml up --build
+#   docker compose --profile lite -f docker-compose.yml -f docker-compose.dev.yml up --build
 #
 # Never use this outside local development: autopilot marks food ready and
 # delivered on a timer, and the admin password below is public.

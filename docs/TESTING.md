@@ -1,7 +1,7 @@
 # Testing
 
-What proves each phase is done, and the **pilot gate**: the bar a client
-deployment must clear before it carries real jobs and real money.
+What proves each phase is done, and the **release gate**: the bar every
+version of the product must clear before it's sold.
 
 The phases are defined in the product brief
 (A–F), with the design in [ADR-0002](adr/0002-modular-monolith.md) and
@@ -82,7 +82,7 @@ existing check line and e2e still pass.
 ### Phase B: modular monolith
 
 Status: **done** (24 September 2026). Contract suite green on both buses,
-pilot and full e2e, idle RAM ~126 MiB (ADR-0002 "Measured").
+lite and full e2e, idle RAM ~126 MiB (ADR-0002 "Measured").
 
 | Test | Type | Proves |
 |---|---|---|
@@ -92,8 +92,8 @@ pilot and full e2e, idle RAM ~126 MiB (ADR-0002 "Measured").
 | In-memory RoundTripper: an inter-module call runs the callee's authz as the end user | handler | ADR-0001 still holds in-process |
 | `cmd/platform` with only some modules enabled boots, and routes of disabled modules return 404 | integration | config picks modules |
 | Every per-service `cmd/` still compiles | CI build | microservice shape stays available |
-| e2e passes on the `pilot` profile (platform + Postgres + Caddy) | e2e | the monolith works end to end |
-| Idle RSS of the `pilot` profile measured (`docker stats`, 5 min after boot, seeded) and recorded in ADR-0002 | measurement | < 1 GB target |
+| e2e passes on the `lite` profile (platform + Postgres + Caddy) | e2e | the monolith works end to end |
+| Idle RSS of the `lite` profile measured (`docker stats`, 5 min after boot, seeded) and recorded in ADR-0002 | measurement | < 1 GB target |
 
 ### Phase C: generalise the domain
 
@@ -106,55 +106,81 @@ pilot and full e2e, idle RAM ~126 MiB (ADR-0002 "Measured").
 | Terminology grep: no `restaurant\|menu\|food\|driver\|kitchen\|dish` outside `packs/food/` except the allow-list | CI check | no food in the core |
 | e2e core suite + scenarios pass for `food` and `courier`; `freight` passes the core suite and its stub scenarios | e2e | the model holds across verticals |
 
-### Phase D: white-label profile
+### Phase D: white-label and buyer configuration
 
 | Test | Type | Proves |
 |---|---|---|
-| Profile merge table: client overrides pack defaults; unknown keys and invalid values fail at boot | domain | one-file rebrand |
+| Brand + pack merge table: brand overrides pack defaults; unknown keys and invalid values fail at boot; `schema:` version checked | domain | config-only rebrand |
 | `GET /config` contains only the public subset (a snapshot test fails if a secret-like key appears) | handler | no leakage |
 | A job outside the service area (radius and polygon) → 400 | handler | area enforced |
-| Flutter: one build, two fake `/config`s (food and courier) → different theme, terms, lifecycle and screens; a courier config shows no menu, a food config no weight field | widget | runtime white-labelling |
-| `scripts/brand-app.sh` sets the app name, bundle id and icon (checked on a generated project) | script test | store builds per client |
+| Flutter: one build, two fake `/config`s (food and courier) → different theme, terms, lifecycle and screens; courier shows no menu, food no weight field; both locales render | widget | runtime white-labelling + i18n |
+| `platformctl` commands: `init`, `new-pack --from courier`, `new-module` (scaffold builds and its tests pass), `import --dry-run` (reports every bad row, writes nothing), `doctor` | CLI integration | buyer tooling works |
+| Map tiles come from config; no default points at tile.openstreetmap.org | unit | tile policy respected |
 
-### Phase E: real-business essentials (pilot pack only)
-
-| Test | Type | Proves |
-|---|---|---|
-| Payment adapter against the gateway's **test mode**: hosted checkout; the webhook signature is verified (a forged one → 401); the same webhook twice → one effect; refund; reconciliation report totals match | integration + manual rehearsal | money handling |
-| Onboarding: an invite or temporary password forces a reset; linked `refId` | handler | accounts |
-| Console, agent, customer and admin flows: widget tests per screen plus the e2e core suite | widget + e2e | role apps |
-| Notification templates render for every event × locale in the pack (golden files) | unit | copy completeness |
-| CSV export matches the job list filters | integration | bookkeeping |
-| Accessibility: tap targets and semantics (`meetsGuideline`) on every role app | widget | a11y |
-
-### Phase F: run it for a real client
+### Phase E: product features
 
 | Test | Type | Proves |
 |---|---|---|
-| `scripts/import.sh --dry-run` on a bad CSV reports every problem and writes nothing; a good CSV imports idempotently | integration | master data import |
-| Backup, then restore to a fresh VPS, then the e2e passes against the restored data | rehearsal (timed) | recoverability |
-| The rehearsal on the VPS: a real payment in test mode, one job through every state, a refund, a cancellation | rehearsal | go-live readiness |
-| `/security-review` findings are fixed or accepted in writing | review | security |
+| Every payment adapter: hosted checkout; forged webhook signature → 401; the same webhook twice → one effect; refund; reconciliation totals | integration (gateway test mode) | money handling |
+| Onboarding: invite or temporary password forces a reset; linked `refId` | handler | accounts |
+| Console, agent, customer, admin flows: widget tests per screen plus the e2e core suite | widget + e2e | role apps |
+| Notification templates render for every event × locale in every shipped pack (golden files) | unit | copy completeness |
+| CSV export matches the job list filters | integration | admin |
+| Accessibility guidelines (`meetsGuideline`) on every role app | widget | a11y |
 
-## The pilot gate
+### Phase F: package it for sale
 
-A client deployment may take real jobs only when **all** of these hold on
-the actual VPS, with the actual profile and pack:
+| Test | Type | Proves |
+|---|---|---|
+| Fresh clone (see below) | CI + manual on three OSes | time to first run < 15 min |
+| Upgrade: from the previous tag, with a customised pack and a buyer strategy in `ext/`, pull the new version → builds, e2e passes, no merge conflicts | scripted | ADR-0004 upgrade promise |
+| License scan: every Go module, Dart package, image, font, icon and tile source is permissive or flagged | script | legal cleanliness |
+| Repo hygiene grep: no university, coursework or personal references, no TODOs in shipped paths, no secrets (gitleaks on the fresh repo) | CI | code survives inspection |
+| `/security-review` findings fixed or accepted in writing | review | security |
+
+## Coverage targets
+
+Line coverage for the packages that hold the logic buyers extend or depend
+on, enforced in CI once each package exists:
+
+| Packages | Target |
+|---|---|
+| `pkg/lifecycle`, `pkg/strategy/**`, `*/internal/domain` | 90% |
+| `pkg/events/bus/**`, `pkg/auth`, `pkg/config`, `pkg/app` | 80% |
+| `*/internal/api` (route-role matrices + handlers) | 70% |
+| everything else | measured and reported, no gate |
+
+Coverage is a floor, not the goal: a strategy at 90% with no invalid-input
+rows in its table still fails review.
+
+## Fresh-clone test
+
+The first thing a buyer does is clone and run, so CI does it too, on every
+release candidate:
+
+1. Check out into an empty directory on a clean runner (no Go/Flutter caches).
+2. Follow only `README.md`'s quick start, verbatim, via a script that
+   parses its code blocks. If the README drifts from reality, this fails.
+3. Assert that the seeded demo serves the gateway, that the core e2e suite
+   passes for the default pack, and that the whole thing took < 15 minutes.
+4. Run manually on Windows and macOS before each release, and record the
+   times in `VERIFY.md` (Phase F).
+
+## The release gate
+
+A version may be sold only when **all** of these hold:
 
 1. The check line passes on the release commit: Go build, vet, race tests,
-   gofmt, integration tests, bus contract (`inprocess`), and Flutter
-   analyze and test.
-2. `./scripts/e2e.sh --pack <pilot>` passes the core suite and the pack
-   scenarios against the deployed stack.
-3. The payment rehearsal passes in the gateway's test mode: pay, webhook,
-   refund, reconciliation.
-4. The backup restore rehearsal passes and its duration is written in
-   `docs/OPERATIONS.md`.
-5. Fail-fast: the deployed config boots with `PROFILE=prod`, and a
-   deliberately broken secret refuses to boot.
-6. Uptime and error alerts fire to the operator (tested by stopping the
-   platform container).
-7. Idle RAM is under 1 GB (or the exception is written down, with the VPS
-   size chosen for it).
-8. `LEGAL_CHECKLIST.md` items are signed off by the client or marked "not
-   applicable" with a reason.
+   gofmt and lint, integration tests, the bus contract on both
+   implementations, Flutter analyze and test, and coverage targets.
+2. `./scripts/e2e.sh --pack <p>` passes the core suite and the pack
+   scenarios for **every shipped pack**, on the `lite` profile, and once on
+   `full`.
+3. The fresh-clone test passes, with times recorded for Linux, Windows and
+   macOS.
+4. The upgrade test from the previous tag passes.
+5. The license scan is clean, or every exception is approved in writing.
+6. The repo hygiene checks pass, and the product ships from a fresh
+   repository with a clean history.
+7. `/security-review` is clean or its accepted findings are documented.
+8. `dist/VERIFY.md` lists exactly what was run, where, and the results.
