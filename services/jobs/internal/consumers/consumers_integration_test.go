@@ -195,3 +195,25 @@ func TestImpossibleEventOnLiveJobFails(t *testing.T) {
 		t.Fatalf("job moved to %s", j.Status)
 	}
 }
+
+// A drop in the middle of a multi-stop route matches no food transition;
+// it is recorded as progress, not dead-lettered as a fault.
+func TestMiddleStopIsRecordedNotRefused(t *testing.T) {
+	h, pool := setup(t)
+	id := newJob(t, pool)
+	_, err := pool.Exec(context.Background(), `INSERT INTO job_stops (job_id, seq, kind, lat, lng) VALUES ($1, 2, 'dropoff', -22.58, 17.09)`, id)
+	must(t, err)
+	must(t, send(t, h, events.PaymentCompleted, id, events.PaymentData{JobID: id}))
+	must(t, send(t, h, events.MerchantAccepted, id, events.MerchantDecisionData{JobID: id}))
+	must(t, send(t, h, events.MerchantReady, id, events.MerchantReadyData{JobID: id}))
+	must(t, send(t, h, events.DispatchStopCompleted, id, events.StopCompletedData{JobID: id, StopSeq: 0}))
+	must(t, send(t, h, events.DispatchStopCompleted, id, events.StopCompletedData{JobID: id, StopSeq: 1}))
+	j := load(t, pool, id)
+	if j.Status != "OUT_FOR_DELIVERY" || j.Stops[1].CompletedAt == nil {
+		t.Fatalf("middle stop: status %s, stop 1 done %v", j.Status, j.Stops[1].CompletedAt)
+	}
+	must(t, send(t, h, events.DispatchStopCompleted, id, events.StopCompletedData{JobID: id, StopSeq: 2}))
+	if j := load(t, pool, id); j.Status != "DELIVERED" {
+		t.Fatalf("the last stop delivers: %s", j.Status)
+	}
+}

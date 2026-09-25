@@ -97,25 +97,6 @@ func TestRouteRoles(t *testing.T) {
 	}
 }
 
-func TestValidPoint(t *testing.T) {
-	cases := []struct {
-		name     string
-		lat, lng float64
-		want     bool
-	}{
-		{"windhoek", -22.56, 17.08, true},
-		{"omitted decodes to 0,0", 0, 0, false},
-		{"lat out of range", 91, 17, false},
-		{"lng out of range", -22, 181, false},
-		{"equator is fine when lng isn't 0", 0, 17.08, true},
-	}
-	for _, c := range cases {
-		if got := validPoint(events.Location{Lat: c.lat, Lng: c.lng}); got != c.want {
-			t.Errorf("%s: validPoint = %v, want %v", c.name, got, c.want)
-		}
-	}
-}
-
 func foodPack(t *testing.T) *packs.Pack {
 	t.Helper()
 	p, err := packs.Load(packfs.FS, "food", lifecycle.Known{Events: events.AllTopics, Roles: []string{"customer", "merchant", "agent", "admin"}})

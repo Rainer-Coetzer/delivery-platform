@@ -1,7 +1,9 @@
-// Package progress moves an assignment through ASSIGNED -> PICKED_UP ->
-// COMPLETED. It is the one place that does this, so the agent's app (via
-// internal/api) and the demo autopilot (via internal/sim) can't drift apart
-// on what a transition writes and publishes.
+// Package progress moves an assignment along its route, one stop at a
+// time: ASSIGNED, then PICKED_UP once the first stop is done (and while
+// the rest are underway), then COMPLETED with the last. It is the one
+// place that does this, so the agent's app (via internal/api) and the demo
+// autopilot (via internal/sim) can't drift apart on what completing a stop
+// writes and publishes.
 package progress
 
 import (
@@ -19,49 +21,64 @@ import (
 
 const (
 	StatusAssigned  = "ASSIGNED"
-	StatusPickedUp  = "PICKED_UP"
+	StatusPickedUp  = "PICKED_UP" // the first stop is done; the rest may still be underway
 	StatusCompleted = "COMPLETED"
 	StatusCancelled = "CANCELLED"
 )
 
-// ErrWrongState means the assignment isn't in the status the caller expected,
-// e.g. an agent tapping "delivered" twice, or the autopilot racing a real
-// agent. Callers treat it as a conflict, not a failure.
+// ErrWrongState means the assignment can't take this step: it's finished,
+// or the stop isn't the next one (an agent tapping "delivered" twice, the
+// autopilot racing a real agent, a stop skipped). Callers treat it as a
+// conflict, not a failure.
 var ErrWrongState = errors.New("assignment not in expected state")
 
-// Advance moves assignment id from `from` to `to` in one transaction: status
-// and timestamp, the agent back to AVAILABLE on completion, and a
-// dispatch.stop-completed for the stop just finished (the pickup for
-// PICKED_UP, the dropoff for COMPLETED). Returns store.ErrNotFound or
-// ErrWrongState for the caller to map.
-func Advance(ctx context.Context, pool *db.Pool, id, from, to string) error {
-	if to != StatusPickedUp && to != StatusCompleted {
-		return fmt.Errorf("progress: %q is not a stop being completed", to)
-	}
+// CompleteStop marks stop seq done in one transaction: the stop, the
+// assignment's status and timestamps, the agent back to AVAILABLE after
+// the last stop, and a dispatch.stop-completed for the jobs module. Stops
+// go in order: only the next open stop can be completed. Returns
+// store.ErrNotFound or ErrWrongState for the caller to map.
+func CompleteStop(ctx context.Context, pool *db.Pool, id string, seq int) error {
 	return pool.WithTx(ctx, func(tx pgx.Tx) error {
 		d, err := store.GetForUpdate(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		if d.Status != from {
-			return fmt.Errorf("%w: assignment %s is %s, expected %s", ErrWrongState, id, d.Status, from)
+		if d.Status != StatusAssigned && d.Status != StatusPickedUp {
+			return fmt.Errorf("%w: assignment %s is %s", ErrWrongState, id, d.Status)
+		}
+		if d.Next == nil {
+			return fmt.Errorf("assignment %s is %s but has no open stop: its route is missing", id, d.Status)
+		}
+		if d.Next.Seq != seq {
+			return fmt.Errorf("%w: stop %d is next on assignment %s, not %d", ErrWrongState, d.Next.Seq, id, seq)
+		}
+		stops, err := store.Stops(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		last := seq == stops[len(stops)-1].Seq
+
+		if err := store.MarkStopDone(ctx, tx, id, seq); err != nil {
+			return err
+		}
+		to := StatusPickedUp
+		if last {
+			to = StatusCompleted
 		}
 		elapsed, err := store.AdvanceStatus(ctx, tx, id, to)
 		if err != nil {
 			return err
 		}
 
-		data := events.StopCompletedData{JobID: d.JobID, AssignmentID: d.ID, AgentID: d.AgentID, StopSeq: d.PickupSeq}
-		if to == StatusCompleted {
-			data.StopSeq = d.DropoffSeq
+		data := events.StopCompletedData{JobID: d.JobID, AssignmentID: d.ID, AgentID: d.AgentID, StopSeq: seq}
+		if last {
 			if err := store.MarkAgentAvailable(ctx, tx, d.AgentID); err != nil {
 				return err
 			}
 			// Assignment to hand-over, which is what admin reports as
-			// assignment time. Was never set before (audit P1, dead field).
+			// assignment time.
 			data.DurationSeconds = elapsed
 		}
-
 		env, err := events.New(events.DispatchStopCompleted, d.JobID, data)
 		if err != nil {
 			return err

@@ -5,6 +5,7 @@ package consumers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -213,10 +214,10 @@ func TestProgressReportsStopSeqs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := progress.Advance(ctx, pool, a.ID, progress.StatusAssigned, progress.StatusPickedUp); err != nil {
+	if err := progress.CompleteStop(ctx, pool, a.ID, 3); err != nil {
 		t.Fatal(err)
 	}
-	if err := progress.Advance(ctx, pool, a.ID, progress.StatusPickedUp, progress.StatusCompleted); err != nil {
+	if err := progress.CompleteStop(ctx, pool, a.ID, 5); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := pool.Query(ctx, `SELECT payload FROM outbox WHERE event_type = $1 ORDER BY id`, events.DispatchStopCompleted)
@@ -260,10 +261,10 @@ func TestLeastLoadedUsesTodaysAssignments(t *testing.T) {
 		t.Fatalf("the only agent takes the first job: %+v %v", a, err)
 	}
 	a, _ := st.GetByJob(ctx, first)
-	if err := progress.Advance(ctx, pool, a.ID, progress.StatusAssigned, progress.StatusPickedUp); err != nil {
+	if err := progress.CompleteStop(ctx, pool, a.ID, 3); err != nil {
 		t.Fatal(err)
 	}
-	if err := progress.Advance(ctx, pool, a.ID, progress.StatusPickedUp, progress.StatusCompleted); err != nil {
+	if err := progress.CompleteStop(ctx, pool, a.ID, 5); err != nil {
 		t.Fatal(err)
 	}
 
@@ -330,5 +331,61 @@ func TestCapacityFiltersCandidates(t *testing.T) {
 	pending, err := st.ListPending(ctx)
 	if err != nil || len(pending) != 1 || pending[0].WeightGrams != 1_000 || len(pending[0].Requires) != 1 {
 		t.Fatalf("the waiting job keeps its size and needs for the retry: %+v %v", pending, err)
+	}
+}
+
+// A multi-drop route: the agent works through the stops in order, the
+// assignment stays underway until the last, and every stop is reported.
+func TestMultiStopRouteRunsInOrder(t *testing.T) {
+	h, pool, st := setup(t)
+	ctx := context.Background()
+	agentID := availableAgent(t, st)
+	jobID := uuid.NewString()
+	env := envelope(t, events.JobStatusChanged, jobID, events.JobStatusChangedData{
+		JobID: jobID, To: "READY", ToMilestone: lifecycle.ReadyForDispatch,
+		Stops: []events.Stop{
+			{Seq: 0, Kind: events.StopPickup, Location: pickup},
+			{Seq: 1, Kind: events.StopDropoff, Location: dropoff},
+			{Seq: 2, Kind: events.StopDropoff, Location: events.Location{Lat: dropoff.Lat + 0.01, Lng: dropoff.Lng}},
+		},
+	})
+	if err := h.Handle(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.GetByJob(ctx, jobID)
+	if err != nil || a.Next == nil || a.Next.Seq != 0 || a.DropoffSeq != 2 {
+		t.Fatalf("assignment should start at stop 0 and end at 2: %+v %v", a, err)
+	}
+
+	step := func(seq int, wantErr bool, wantStatus string) {
+		t.Helper()
+		err := progress.CompleteStop(ctx, pool, a.ID, seq)
+		if wantErr != (err != nil) {
+			t.Fatalf("stop %d: err = %v, want error %v", seq, err, wantErr)
+		}
+		if wantErr && !errors.Is(err, progress.ErrWrongState) {
+			t.Fatalf("stop %d: out of order must be ErrWrongState, got %v", seq, err)
+		}
+		got, err := st.GetByJob(ctx, jobID)
+		if err != nil || got.Status != wantStatus {
+			t.Fatalf("after stop %d: status %s, want %s (%v)", seq, got.Status, wantStatus, err)
+		}
+	}
+	step(1, true, "ASSIGNED") // can't drop before picking up
+	step(0, false, "PICKED_UP")
+	step(2, true, "PICKED_UP") // can't skip a drop
+	step(1, false, "PICKED_UP")
+	if got := agentStatus(t, st, agentID); got != "BUSY" {
+		t.Fatalf("mid-route the agent is %s, want BUSY", got)
+	}
+	step(2, false, "COMPLETED")
+	if got := agentStatus(t, st, agentID); got != "AVAILABLE" {
+		t.Fatalf("after the last stop the agent is %s, want AVAILABLE", got)
+	}
+	step(2, true, "COMPLETED") // done is done
+
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE event_type = $1`, events.DispatchStopCompleted).Scan(&n); err != nil || n != 3 {
+		t.Fatalf("one stop-completed per stop: %d %v", n, err)
 	}
 }

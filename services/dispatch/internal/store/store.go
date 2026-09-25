@@ -6,10 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
+	"github.com/rainercoetzer/delivery-platform/pkg/events"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -44,6 +46,21 @@ type Assignment struct {
 	Status     string `json:"status"`
 	Simulated  bool   `json:"simulated"`
 	EtaMinutes int    `json:"etaMinutes"`
+	// Next is the first stop not done yet (nil once all are). The agent
+	// goes there; the simulation moves toward it.
+	Next *AssignmentStop `json:"next,omitempty"`
+	// Stops is every stop in order, loaded only where the caller needs it.
+	Stops []AssignmentStop `json:"stops,omitempty"`
+}
+
+// AssignmentStop is one stop on an assignment's route.
+type AssignmentStop struct {
+	Seq         int        `json:"seq"`
+	Kind        string     `json:"kind"`
+	Lat         float64    `json:"lat"`
+	Lng         float64    `json:"lng"`
+	Label       string     `json:"label,omitempty"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
 }
 
 type Store struct{ pool *db.Pool }
@@ -184,7 +201,8 @@ func UpdateAgentLocation(ctx context.Context, q db.Queryer, id string, lat, lng 
 	return nil
 }
 
-func InsertAssignment(ctx context.Context, tx pgx.Tx, d *Assignment) error {
+// InsertAssignment stores the assignment and every stop on its route.
+func InsertAssignment(ctx context.Context, tx pgx.Tx, d *Assignment, stops []events.Stop) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO assignments (id, job_id, agent_id, merchant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
 			pickup_seq, dropoff_seq, status, eta_minutes)
@@ -194,21 +212,61 @@ func InsertAssignment(ctx context.Context, tx pgx.Tx, d *Assignment) error {
 	if err != nil {
 		return fmt.Errorf("insert assignment: %w", err)
 	}
+	for _, s := range stops {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO assignment_stops (assignment_id, seq, kind, lat, lng, label) VALUES ($1,$2,$3,$4,$5,$6)`,
+			d.ID, s.Seq, s.Kind, s.Location.Lat, s.Location.Lng, nullStr(s.Location.Label))
+		if err != nil {
+			return fmt.Errorf("insert assignment %s stop %d: %w", d.ID, s.Seq, err)
+		}
+	}
+	return nil
+}
+
+// Stops loads an assignment's route, in order.
+func Stops(ctx context.Context, q db.Queryer, assignmentID string) ([]AssignmentStop, error) {
+	rows, err := q.Query(ctx, `
+		SELECT seq, kind, lat, lng, coalesce(label,''), completed_at
+		FROM assignment_stops WHERE assignment_id = $1 ORDER BY seq`, assignmentID)
+	if err != nil {
+		return nil, fmt.Errorf("list stops of assignment %s: %w", assignmentID, err)
+	}
+	defer rows.Close()
+	var out []AssignmentStop
+	for rows.Next() {
+		var s AssignmentStop
+		if err := rows.Scan(&s.Seq, &s.Kind, &s.Lat, &s.Lng, &s.Label, &s.CompletedAt); err != nil {
+			return nil, fmt.Errorf("scan assignment stop: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// MarkStopDone records stop seq of an assignment as done now.
+func MarkStopDone(ctx context.Context, tx pgx.Tx, assignmentID string, seq int) error {
+	tag, err := tx.Exec(ctx, `UPDATE assignment_stops SET completed_at = now() WHERE assignment_id = $1 AND seq = $2 AND completed_at IS NULL`, assignmentID, seq)
+	if err != nil {
+		return fmt.Errorf("complete stop %d of assignment %s: %w", seq, assignmentID, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("complete stop %d of assignment %s: no open stop to complete", seq, assignmentID)
+	}
 	return nil
 }
 
 func (s *Store) GetByJob(ctx context.Context, jobID string) (*Assignment, error) {
-	row := s.pool.QueryRow(ctx, baseSelect+` WHERE job_id=$1`, jobID)
+	row := s.pool.QueryRow(ctx, baseSelect+` WHERE a.job_id=$1`, jobID)
 	return scanAssignment(row)
 }
 
 func (s *Store) Get(ctx context.Context, id string) (*Assignment, error) {
-	row := s.pool.QueryRow(ctx, baseSelect+` WHERE id=$1`, id)
+	row := s.pool.QueryRow(ctx, baseSelect+` WHERE a.id=$1`, id)
 	return scanAssignment(row)
 }
 
 func GetForUpdate(ctx context.Context, tx pgx.Tx, id string) (*Assignment, error) {
-	row := tx.QueryRow(ctx, baseSelect+` WHERE id=$1 FOR UPDATE`, id)
+	row := tx.QueryRow(ctx, baseSelect+` WHERE a.id=$1 FOR UPDATE OF a`, id)
 	return scanAssignment(row)
 }
 
@@ -216,7 +274,7 @@ func GetForUpdate(ctx context.Context, tx pgx.Tx, id string) (*Assignment, error
 // location simulation loop to advance. Listed by status rather than
 // "not COMPLETED" so CANCELLED assignments stop moving too.
 func (s *Store) ListActive(ctx context.Context) ([]*Assignment, error) {
-	rows, err := s.pool.Query(ctx, baseSelect+` WHERE status IN ('ASSIGNED','PICKED_UP') AND simulated = true`)
+	rows, err := s.pool.Query(ctx, baseSelect+` WHERE a.status IN ('ASSIGNED','PICKED_UP') AND a.simulated = true`)
 	if err != nil {
 		return nil, fmt.Errorf("list active assignments: %w", err)
 	}
@@ -237,7 +295,7 @@ func (s *Store) ListActive(ctx context.Context) ([]*Assignment, error) {
 func AdvanceStatus(ctx context.Context, tx pgx.Tx, id, status string) (elapsedSeconds int64, err error) {
 	err = tx.QueryRow(ctx, `
 		UPDATE assignments SET status = $2, updated_at = now(),
-			picked_up_at = CASE WHEN $2 = 'PICKED_UP' THEN now() ELSE picked_up_at END,
+			picked_up_at = CASE WHEN $2 = 'PICKED_UP' THEN coalesce(picked_up_at, now()) ELSE picked_up_at END,
 			completed_at = CASE WHEN $2 = 'COMPLETED' THEN now() ELSE completed_at END
 		WHERE id = $1
 		RETURNING extract(epoch FROM now() - created_at)::bigint`, id, status).Scan(&elapsedSeconds)
@@ -248,7 +306,7 @@ func AdvanceStatus(ctx context.Context, tx pgx.Tx, id, status string) (elapsedSe
 }
 
 func GetByJobForUpdate(ctx context.Context, tx pgx.Tx, jobID string) (*Assignment, error) {
-	return scanAssignment(tx.QueryRow(ctx, baseSelect+` WHERE job_id=$1 FOR UPDATE`, jobID))
+	return scanAssignment(tx.QueryRow(ctx, baseSelect+` WHERE a.job_id=$1 FOR UPDATE OF a`, jobID))
 }
 
 func (s *Store) GetAgent(ctx context.Context, id string) (*Agent, error) {
@@ -307,15 +365,30 @@ func UpdateETA(ctx context.Context, q db.Queryer, id string, etaMinutes int) err
 	return nil
 }
 
-const baseSelect = `SELECT id, job_id, coalesce(agent_id,''), coalesce(merchant_id,''), pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
-	pickup_seq, dropoff_seq, status, simulated, eta_minutes FROM assignments`
+// baseSelect joins each assignment's next open stop. Callers that lock
+// must say FOR UPDATE OF a: the joined side can't be locked.
+const baseSelect = `SELECT a.id, a.job_id, coalesce(a.agent_id,''), coalesce(a.merchant_id,''), a.pickup_lat, a.pickup_lng,
+	a.dropoff_lat, a.dropoff_lng, a.pickup_seq, a.dropoff_seq, a.status, a.simulated, a.eta_minutes,
+	n.seq, n.kind, n.lat, n.lng, n.label
+	FROM assignments a
+	LEFT JOIN LATERAL (
+		SELECT seq, kind, lat, lng, coalesce(label,'') AS label FROM assignment_stops
+		WHERE assignment_id = a.id AND completed_at IS NULL ORDER BY seq LIMIT 1
+	) n ON true`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanAssignment(row rowScanner) (*Assignment, error) {
 	d := &Assignment{}
+	var nSeq *int
+	var nKind, nLabel *string
+	var nLat, nLng *float64
 	err := row.Scan(&d.ID, &d.JobID, &d.AgentID, &d.MerchantID, &d.PickupLat, &d.PickupLng,
-		&d.DropoffLat, &d.DropoffLng, &d.PickupSeq, &d.DropoffSeq, &d.Status, &d.Simulated, &d.EtaMinutes)
+		&d.DropoffLat, &d.DropoffLng, &d.PickupSeq, &d.DropoffSeq, &d.Status, &d.Simulated, &d.EtaMinutes,
+		&nSeq, &nKind, &nLat, &nLng, &nLabel)
+	if err == nil && nSeq != nil {
+		d.Next = &AssignmentStop{Seq: *nSeq, Kind: *nKind, Lat: *nLat, Lng: *nLng, Label: *nLabel}
+	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -339,6 +412,9 @@ type Route struct {
 	DropoffLng float64
 	PickupSeq  int
 	DropoffSeq int
+	// Stops is the whole route in order (multi-stop jobs have more than
+	// the pickup and dropoff above).
+	Stops []events.Stop
 	// Capacity module: the job's size and the capabilities it needs.
 	WeightGrams int64
 	VolumeCm3   int64
@@ -348,10 +424,10 @@ type Route struct {
 func InsertPending(ctx context.Context, tx pgx.Tx, p *Route) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO pending_assignments (job_id, merchant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq,
-			weight_g, volume_cm3, requires)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (job_id) DO NOTHING`,
+			weight_g, volume_cm3, requires, stops)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (job_id) DO NOTHING`,
 		p.JobID, nullStr(p.MerchantID), p.PickupLat, p.PickupLng, p.DropoffLat, p.DropoffLng, p.PickupSeq, p.DropoffSeq,
-		p.WeightGrams, p.VolumeCm3, capabilities(p.Requires))
+		p.WeightGrams, p.VolumeCm3, capabilities(p.Requires), stopsJSON(p.Stops))
 	if err != nil {
 		return fmt.Errorf("insert pending assignment: %w", err)
 	}
@@ -368,7 +444,7 @@ func DeletePending(ctx context.Context, tx pgx.Tx, jobID string) error {
 
 func (s *Store) ListPending(ctx context.Context) ([]*Route, error) {
 	rows, err := s.pool.Query(ctx, `SELECT job_id, coalesce(merchant_id,''), pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq,
-		weight_g, volume_cm3, requires
+		weight_g, volume_cm3, requires, stops
 		FROM pending_assignments ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list pending assignments: %w", err)
@@ -378,12 +454,19 @@ func (s *Store) ListPending(ctx context.Context) ([]*Route, error) {
 	for rows.Next() {
 		p := &Route{}
 		if err := rows.Scan(&p.JobID, &p.MerchantID, &p.PickupLat, &p.PickupLng, &p.DropoffLat, &p.DropoffLng, &p.PickupSeq, &p.DropoffSeq,
-			&p.WeightGrams, &p.VolumeCm3, &p.Requires); err != nil {
+			&p.WeightGrams, &p.VolumeCm3, &p.Requires, &p.Stops); err != nil {
 			return nil, fmt.Errorf("scan pending assignment: %w", err)
 		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+func stopsJSON(s []events.Stop) []events.Stop {
+	if s == nil {
+		return []events.Stop{} // the column is NOT NULL; "[]" not "null"
+	}
+	return s
 }
 
 func nullInt(v int64) any {

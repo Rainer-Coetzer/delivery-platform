@@ -118,11 +118,10 @@ func (s *LocationSimulator) tick(ctx context.Context) {
 		return
 	}
 	for _, d := range assignments {
-		target := events.Location{Lat: d.DropoffLat, Lng: d.DropoffLng}
-		if d.Status == progress.StatusAssigned {
-			target = events.Location{Lat: d.PickupLat, Lng: d.PickupLng}
+		if d.Next == nil {
+			continue // every stop done; completion is on its way
 		}
-		s.advance(ctx, d, target)
+		s.advance(ctx, d, events.Location{Lat: d.Next.Lat, Lng: d.Next.Lng})
 	}
 }
 
@@ -167,19 +166,16 @@ func (s *LocationSimulator) advance(ctx context.Context, d *store.Assignment, ta
 	}
 }
 
-// autopilot performs the tap a real agent would make on arrival. Losing a
-// race to a real agent (ErrWrongState) is fine and not worth an error log.
+// autopilot performs the tap a real agent would make on arrival at the
+// next stop. Losing a race to a real agent (ErrWrongState) is fine and not
+// worth an error log.
 func (s *LocationSimulator) autopilot(ctx context.Context, d *store.Assignment) {
-	from, to := progress.StatusPickedUp, progress.StatusCompleted
-	if d.Status == progress.StatusAssigned {
-		from, to = progress.StatusAssigned, progress.StatusPickedUp
-	}
-	err := progress.Advance(ctx, s.Pool, d.ID, from, to)
+	err := progress.CompleteStop(ctx, s.Pool, d.ID, d.Next.Seq)
 	switch {
 	case err == nil:
-		s.Log.Info("autopilot advanced assignment", "jobId", d.JobID, "to", to)
+		s.Log.Info("autopilot completed stop", "jobId", d.JobID, "seq", d.Next.Seq)
 	case errors.Is(err, progress.ErrWrongState):
 	default:
-		s.Log.Error("autopilot advance failed", "jobId", d.JobID, "to", to, "error", err)
+		s.Log.Error("autopilot stop failed", "jobId", d.JobID, "seq", d.Next.Seq, "error", err)
 	}
 }

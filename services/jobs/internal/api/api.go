@@ -81,6 +81,9 @@ type createJobRequest struct {
 	Pickup  events.Location `json:"pickup"`
 	Dropoff events.Location `json:"dropoff"`
 
+	// multi_stop: the whole route, in visiting order.
+	Stops []domain.RequestedStop `json:"stops"`
+
 	// packages module: what is being moved.
 	Packages []domain.RequestedPackage `json:"packages"`
 
@@ -140,6 +143,8 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		plan, reqErr = a.planMerchantJob(ctx, r.Header.Get("Authorization"), req)
 	case packs.StopsPointToPoint:
 		plan, reqErr = a.planPointToPoint(req)
+	case packs.StopsMultiStop:
+		plan, reqErr = a.planMultiStop(req)
 	default:
 		reqErr = &requestError{status: http.StatusNotImplemented, code: "not_implemented",
 			message: "pack " + a.Pack.Name + " uses stops: " + a.Pack.Job.Stops + ", which job creation doesn't support yet"}
@@ -233,7 +238,7 @@ func (a *API) planMerchantJob(ctx context.Context, authorization string, req cre
 	if req.MerchantID == "" {
 		return nil, badRequest("merchantId is required")
 	}
-	if !validPoint(req.Dropoff) {
+	if !domain.ValidPoint(req.Dropoff) {
 		return nil, badRequest("dropoff must be a real coordinate (lat -90..90, lng -180..180)")
 	}
 	rest, offered, err := a.Catalogue.Fetch(ctx, authorization, req.MerchantID)
@@ -262,11 +267,25 @@ func (a *API) planMerchantJob(ctx context.Context, authorization string, req cre
 	}, nil
 }
 
+// planMultiStop is freight's template: the customer gives the whole route
+// (pickups, drops, waypoints) and declares the packages.
+func (a *API) planMultiStop(req createJobRequest) (*jobPlan, *requestError) {
+	stops, err := domain.PlanStops(req.Stops, a.Pack.Settings.MultiStop)
+	if err != nil {
+		return nil, badRequest(err.Error())
+	}
+	items, err := domain.PackageLines(req.Packages, a.Pack.Settings.Packages)
+	if err != nil {
+		return nil, badRequest(err.Error())
+	}
+	return &jobPlan{items: items, stops: stops}, nil
+}
+
 // planPointToPoint is courier's template: the customer names the pickup
 // and the dropoff and declares the packages. There is no merchant and no
 // subtotal: the price is the pack's fee alone.
 func (a *API) planPointToPoint(req createJobRequest) (*jobPlan, *requestError) {
-	if !validPoint(req.Pickup) || !validPoint(req.Dropoff) {
+	if !domain.ValidPoint(req.Pickup) || !domain.ValidPoint(req.Dropoff) {
 		return nil, badRequest("pickup and dropoff must both be real coordinates (lat -90..90, lng -180..180)")
 	}
 	items, err := domain.PackageLines(req.Packages, a.Pack.Settings.Packages)
@@ -285,16 +304,6 @@ func (a *API) planPointToPoint(req createJobRequest) (*jobPlan, *requestError) {
 // assumedFreeAgents stands in for the real count of free agents in the
 // surge load until dispatch publishes it.
 const assumedFreeAgents = 5
-
-// validPoint rejects out-of-range coordinates and the 0,0 an omitted
-// location decodes to (a point in the Atlantic that would send an agent
-// nowhere useful).
-func validPoint(l events.Location) bool {
-	if l.Lat == 0 && l.Lng == 0 {
-		return false
-	}
-	return l.Lat >= -90 && l.Lat <= 90 && l.Lng >= -180 && l.Lng <= 180
-}
 
 // CanView reports whether caller may see job o: its customer, its
 // merchant, its assigned agent, or an admin. The gateway's WebSocket

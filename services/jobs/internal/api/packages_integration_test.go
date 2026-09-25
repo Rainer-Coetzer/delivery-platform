@@ -130,3 +130,52 @@ func TestPointToPointWithPackages(t *testing.T) {
 		}
 	}
 }
+
+func TestMultiStopJob(t *testing.T) {
+	pack := strings.NewReplacer(
+		"name: parcel", "name: haul",
+		"modules: [packages, capacity]", "modules: [packages, capacity, multi-stop]",
+		"stops: point_to_point", "stops: multi_stop",
+	).Replace(parcelPack) + "  multi-stop: { max_stops: 5 }\n"
+	p, err := packs.Load(fstest.MapFS{
+		"haul/pack.yaml":      {Data: []byte(pack)},
+		"haul/lifecycle.yaml": {Data: []byte(parcelLifecycle)},
+	}, "haul", lifecycle.Known{Events: events.AllTopics, Roles: []string{"customer", "merchant", "agent", "admin"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	strategies, err := app.BuildStrategies(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := dbtest.New(t, migrations.FS)
+	a := &API{Pool: pool, Store: store.New(pool), Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: as(&auth.Claims{UserID: "c1", Role: auth.RoleCustomer}), Pack: p, Pricing: strategies.Pricing, Payments: strategies.Payments}
+	r := chi.NewRouter()
+	a.Routes(r)
+	post := func(body string) (int, string) {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest("POST", "/jobs", strings.NewReader(body)))
+		return rec.Code, rec.Body.String()
+	}
+	const pkgs = `"packages": [{"description": "Pallet", "quantity": 2, "weightGrams": 25000, "lengthMm": 1200, "widthMm": 800, "heightMm": 1000}]`
+	// CBD -> Katutura -> back to the CBD: just over 11 km (each way is a
+	// little over 5.5 km), so 12 km billed: distance runs through every stop.
+	code, body := post(`{"paymentMethod": "cash", ` + pkgs + `, "stops": [
+		{"kind": "pickup", "location": {"lat": -22.5700, "lng": 17.0836}},
+		{"kind": "dropoff", "location": {"lat": -22.5250, "lng": 17.0600}},
+		{"kind": "return", "location": {"lat": -22.5700, "lng": 17.0836}}]}`)
+	if code != 201 {
+		t.Fatalf("create: %d %s", code, body)
+	}
+	var j domain.Job
+	if err := json.Unmarshal([]byte(body), &j); err != nil {
+		t.Fatal(err)
+	}
+	if len(j.Stops) != 3 || j.Stops[2].Kind != "return" || j.DeliveryFeeCents != 2000+12*800 {
+		t.Fatalf("route and fee: %d stops, fee %d", len(j.Stops), j.DeliveryFeeCents)
+	}
+	if code, body := post(`{"paymentMethod": "cash", ` + pkgs + `, "stops": [{"kind": "dropoff", "location": {"lat": -22.5, "lng": 17.0}}, {"kind": "dropoff", "location": {"lat": -22.6, "lng": 17.1}}]}`); code != 400 || !strings.Contains(body, "first stop must be a pickup") {
+		t.Fatalf("a route that starts with a drop: %d %s", code, body)
+	}
+}

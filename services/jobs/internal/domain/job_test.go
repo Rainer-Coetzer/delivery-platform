@@ -89,3 +89,50 @@ func TestJob_SettleOnFoodIsANoop(t *testing.T) {
 		t.Fatalf("a new food job waits: %+v", steps)
 	}
 }
+
+func TestJob_EventShapes(t *testing.T) {
+	j := foodJob()
+	j.Items = []Item{
+		{Kind: LineCatalogue, CatalogueItemID: "i1", Name: "Platter", Quantity: 2, UnitPriceCents: 6500},
+		{Kind: LinePackage, Name: "Box", Quantity: 3, WeightGrams: 1200, LengthMm: 100, WidthMm: 100, HeightMm: 100},
+	}
+	lines := j.EventLines()
+	if len(lines) != 2 || lines[0].CatalogueItemID != "i1" || lines[0].WeightGrams != 0 {
+		t.Fatalf("catalogue line: %+v", lines[0])
+	}
+	// Volume is per unit on the event; the job's total is SizeOf's business.
+	if lines[1].Kind != LinePackage || lines[1].WeightGrams != 1200 || lines[1].VolumeCm3 != 1000 {
+		t.Fatalf("package line: %+v", lines[1])
+	}
+	if stops := j.EventStops(); len(stops) != 2 || stops[1].Kind != events.StopDropoff {
+		t.Fatalf("stops: %+v", stops)
+	}
+}
+
+func TestJob_SetFact(t *testing.T) {
+	m, err := lifecycle.Load([]byte(`schema: 1
+initial: NEW
+states:
+  - { name: NEW, milestone: created }
+  - { name: READY, milestone: ready_for_dispatch }
+  - { name: DONE, milestone: completed, terminal: true }
+  - { name: GONE, milestone: cancelled, terminal: true }
+facts:
+  approved: { by: [merchant] }
+transitions:
+  - { from: NEW, to: READY, auto: true, when: [approved] }
+  - { from: READY, to: DONE, on: dispatch.stop-completed, stop: last_stop }
+  - { from: "*", to: GONE, by: [admin] }
+`), lifecycle.Known{Events: events.AllTopics, Roles: []string{"customer", "merchant", "agent", "admin"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := &Job{Status: "NEW", Milestone: lifecycle.Created}
+	if _, err := j.SetFact(m, "approved", "customer"); !errors.Is(err, lifecycle.ErrNoTransition) {
+		t.Fatalf("customer may not approve: %v", err)
+	}
+	steps, err := j.SetFact(m, "approved", "merchant")
+	if err != nil || len(steps) != 1 || j.Status != "READY" || j.Milestone != lifecycle.ReadyForDispatch || !j.Facts["approved"] {
+		t.Fatalf("approval unlocks READY: %+v %+v %v", steps, j, err)
+	}
+}

@@ -89,9 +89,12 @@ func TestUpgradeFromPreRenameSchemas(t *testing.T) {
 			       INSERT INTO pending_assignments (order_id, restaurant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng) VALUES ('j2', 'm1', 0, 0, 0, 0);
 			       INSERT INTO cancelled_orders (order_id) VALUES ('j3');`,
 			check: `SELECT a.job_id || '|' || a.agent_id || '|' || a.merchant_id || '|' || (SELECT job_id FROM pending_assignments) || '|' ||
-			               (SELECT job_id FROM cancelled_jobs) || '|' || (SELECT name FROM agents)
+			               (SELECT job_id FROM cancelled_jobs) || '|' || (SELECT name FROM agents) || '|' ||
+			               (SELECT string_agg(seq || kind || (completed_at IS NOT NULL), ',' ORDER BY seq) FROM assignment_stops) || '|' ||
+			               (SELECT jsonb_array_length(stops) || (stops -> 0 ->> 'merchantId') || (stops -> 1 ->> 'kind') FROM pending_assignments)
 			        FROM assignments a`,
-			want: "j1|a1|m1|j2|j3|D",
+			// The seeded delivery is ASSIGNED: neither stop is done yet.
+			want: "j1|a1|m1|j2|j3|D|0pickupfalse,1dropofffalse|2m1dropoff",
 		},
 		{
 			def: notification.Definition, oldSchema: "", before: 2,

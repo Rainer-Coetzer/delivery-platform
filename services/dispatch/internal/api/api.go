@@ -5,8 +5,10 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -42,6 +44,10 @@ func (a *API) Routes(r chi.Router) {
 	r.Route("/assignments", func(r chi.Router) {
 		r.Use(a.Auth)
 		r.Get("/{jobId}", a.getAssignment)
+		r.Post("/{id}/stops/{seq}/completed", a.stopCompleted)
+		// Shortcuts for two-stop jobs (and today's app): the first stop,
+		// and the last. On a multi-stop route "completed" is refused
+		// while stops remain.
 		r.Post("/{id}/picked-up", a.pickedUp)
 		r.Post("/{id}/completed", a.completed)
 	})
@@ -179,35 +185,65 @@ func (a *API) getAssignment(w http.ResponseWriter, r *http.Request) {
 		httpx.NotFound(w, "assignment not found")
 		return
 	}
+	if d.Stops, err = store.Stops(r.Context(), a.Pool, d.ID); err != nil {
+		a.Log.Error("load assignment stops", "error", err)
+		httpx.Internal(w, "could not load assignment")
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, d)
 }
 
+func (a *API) stopCompleted(w http.ResponseWriter, r *http.Request) {
+	seq, err := strconv.Atoi(chi.URLParam(r, "seq"))
+	if err != nil {
+		httpx.BadRequest(w, "stop number must be an integer")
+		return
+	}
+	a.completeStop(w, r, func(*store.Assignment, []store.AssignmentStop) int { return seq })
+}
+
 func (a *API) pickedUp(w http.ResponseWriter, r *http.Request) {
-	a.transition(w, r, progress.StatusAssigned, progress.StatusPickedUp)
+	a.completeStop(w, r, func(_ *store.Assignment, stops []store.AssignmentStop) int { return stops[0].Seq })
 }
 
 func (a *API) completed(w http.ResponseWriter, r *http.Request) {
-	a.transition(w, r, progress.StatusPickedUp, progress.StatusCompleted)
+	a.completeStop(w, r, func(_ *store.Assignment, stops []store.AssignmentStop) int { return stops[len(stops)-1].Seq })
 }
 
-func (a *API) transition(w http.ResponseWriter, r *http.Request, from, to string) {
+// completeStop completes the stop which picks out of the assignment's
+// route, for the assigned agent (or an admin).
+func (a *API) completeStop(w http.ResponseWriter, r *http.Request, which func(*store.Assignment, []store.AssignmentStop) int) {
+	ctx := r.Context()
 	id := chi.URLParam(r, "id")
-	d, err := a.Store.Get(r.Context(), id)
-	if err == nil && !assignedTo(auth.MustFromContext(r.Context()), d) {
+	d, err := a.Store.Get(ctx, id)
+	if err == nil && !assignedTo(auth.MustFromContext(ctx), d) {
 		err = store.ErrNotFound // someone else's assignment: indistinguishable from missing
 	}
+	var stops []store.AssignmentStop
 	if err == nil {
-		err = progress.Advance(r.Context(), a.Pool, id, from, to)
+		stops, err = store.Stops(ctx, a.Pool, id)
+	}
+	if err == nil && len(stops) == 0 {
+		err = fmt.Errorf("assignment %s has no route", id)
+	}
+	seq := 0
+	if err == nil {
+		seq = which(d, stops)
+		err = progress.CompleteStop(ctx, a.Pool, id, seq)
 	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		httpx.NotFound(w, "assignment not found")
 	case errors.Is(err, progress.ErrWrongState):
-		httpx.Conflict(w, "assignment is not in the "+from+" state")
+		next := "none: the assignment is finished"
+		if d.Next != nil {
+			next = strconv.Itoa(d.Next.Seq)
+		}
+		httpx.Conflict(w, "stop "+strconv.Itoa(seq)+" can't be completed now; next open stop: "+next)
 	case err != nil:
-		a.Log.Error("assignment transition", "error", err)
+		a.Log.Error("complete stop", "error", err)
 		httpx.Internal(w, "could not update assignment")
 	default:
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": to})
+		httpx.WriteJSON(w, http.StatusOK, map[string]int{"completedStop": seq})
 	}
 }

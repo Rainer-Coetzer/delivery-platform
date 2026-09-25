@@ -81,6 +81,13 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 		var steps []lifecycle.Step
 		if h.Lifecycle.Reacts(env.EventType) {
 			steps, err = j.Apply(h.Lifecycle, trigger, reasonOf(env))
+			if errors.Is(err, lifecycle.ErrNoTransition) && env.EventType == events.DispatchStopCompleted &&
+				!trigger.Stop.FirstPickup && !trigger.Stop.LastStop {
+				// A stop in the middle of a multi-stop route: recorded above,
+				// and nothing in the lifecycle waits on it. That's progress,
+				// not a fault.
+				return store.Save(ctx, tx, j, nil)
+			}
 			if errors.Is(err, lifecycle.ErrNoTransition) && j.Terminal() {
 				// A late event for a finished job (a payment landing after
 				// a rejection cancelled it) is a normal race, not a fault.

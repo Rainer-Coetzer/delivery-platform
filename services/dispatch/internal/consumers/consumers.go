@@ -60,9 +60,9 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 	}
 }
 
-// RouteFor picks the pickup and dropoff out of the stops the jobs module
-// sends with ready_for_dispatch: the first pickup and the last stop. A job
-// with more stops than that needs the multi-stop module (Phase C step 5).
+// RouteFor turns the stops the jobs module sends with ready_for_dispatch
+// into a route: every stop in order, with the first pickup (where the
+// agent is dispatched from) and the last stop called out.
 func RouteFor(data events.JobStatusChangedData) (*store.Route, error) {
 	if len(data.Stops) < 2 {
 		return nil, fmt.Errorf("job %s reached ready_for_dispatch with %d stops; dispatch needs a pickup and a dropoff", data.JobID, len(data.Stops))
@@ -87,6 +87,7 @@ func RouteFor(data events.JobStatusChangedData) (*store.Route, error) {
 		PickupLat: pickup.Location.Lat, PickupLng: pickup.Location.Lng, PickupSeq: pickup.Seq,
 		DropoffLat: last.Location.Lat, DropoffLng: last.Location.Lng, DropoffSeq: last.Seq,
 		Requires: data.Requires,
+		Stops:    data.Stops,
 	}
 	if data.Size != nil {
 		r.WeightGrams, r.VolumeCm3 = data.Size.WeightGrams, data.Size.VolumeCm3
@@ -209,7 +210,7 @@ func (d *Dispatcher) TryAssign(ctx context.Context, tx pgx.Tx, r *store.Route) (
 		PickupSeq: r.PickupSeq, DropoffSeq: r.DropoffSeq,
 		Status: progress.StatusAssigned, EtaMinutes: eta,
 	}
-	if err := store.InsertAssignment(ctx, tx, assignment); err != nil {
+	if err := store.InsertAssignment(ctx, tx, assignment, r.Stops); err != nil {
 		return 0, err
 	}
 
