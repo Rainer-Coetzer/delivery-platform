@@ -59,7 +59,7 @@ class _AgentHomeScreenState extends ConsumerState<AgentHomeScreen> {
                     'When a ${config.term('job')} is ready, an available ${config.term('agent')} '
                     'is assigned automatically. While online, this screen streams your '
                     'location so customers can see you on the map.',
-                    style: const TextStyle(color: Colors.grey),
+                    style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                 ],
               ),

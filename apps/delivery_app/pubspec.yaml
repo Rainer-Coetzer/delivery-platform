@@ -21,6 +21,8 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   geolocator: ^12.0.0
   intl: ^0.19.0
+  # Brand logos are often SVG (the shipped one is); Image can't draw SVG.
+  flutter_svg: ^2.3.0
 
 dev_dependencies:
   flutter_test:

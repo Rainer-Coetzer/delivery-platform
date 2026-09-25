@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/config.dart';
 import '../../providers/providers.dart';
 
 /// One merchant's catalogue ("menu" for food), with add/remove to cart.
@@ -31,7 +30,7 @@ class CatalogueScreen extends ConsumerWidget {
                   return Card(
                     child: ListTile(
                       title: Text(item.name),
-                      subtitle: Text('${money(item.priceCents)}${item.available ? '' : ' (unavailable)'}'),
+                      subtitle: Text('${config.money(item.priceCents)}${item.available ? '' : ' (unavailable)'}'),
                       trailing: item.available
                           ? Row(
                               mainAxisSize: MainAxisSize.min,

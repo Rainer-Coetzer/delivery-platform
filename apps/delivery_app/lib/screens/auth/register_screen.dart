@@ -33,7 +33,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 ? Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.check_circle, color: Colors.green, size: 48),
+                      Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary, size: 48),
                       const SizedBox(height: 12),
                       const Text('Account created. You can log in now.'),
                       const SizedBox(height: 20),
@@ -50,9 +50,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       const SizedBox(height: 12),
                       TextField(controller: _password, obscureText: true, decoration: const InputDecoration(labelText: 'Password (min 8 chars)')),
                       const SizedBox(height: 12),
-                      const Text(
+                      Text(
                         'Business and staff accounts are set up by an admin.',
-                        style: TextStyle(color: Colors.grey),
+                        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                       ),
                       if (_error != null) ...[
                         const SizedBox(height: 12),

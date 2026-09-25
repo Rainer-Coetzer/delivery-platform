@@ -1,8 +1,11 @@
 import 'package:delivery_app/core/config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'brand_test.dart' show brandJson;
+
 // The shape GET /config returns (pkg/packs.PublicConfig), for the courier pack.
 final _courier = {
+  'brand': brandJson(),
   'pack': {'name': 'courier', 'description': 'Parcels'},
   'locale': 'en',
   'modules': ['packages', 'capacity', 'proof', 'scheduling'],
@@ -45,7 +48,14 @@ void main() {
     expect(config.paymentMethods, ['card', 'cash']);
   });
 
-  test('money is minor units', () {
-    expect(money(4300), 'N\$43.00');
+  test("money is in the brand's currency", () {
+    expect(config.money(4300), 'R43.00');
+    expect(config.brand.name, 'Test Couriers');
+  });
+
+  test('sign-up is open only when the brand offers customers', () {
+    expect(config.openSignUp, isTrue);
+    final noCustomers = AppConfig.fromJson({..._courier, 'roles': ['agent', 'admin']});
+    expect(noCustomers.openSignUp, isFalse);
   });
 }

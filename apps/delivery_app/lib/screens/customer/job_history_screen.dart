@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/config.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
 
@@ -42,7 +41,7 @@ class JobHistoryScreen extends ConsumerWidget {
               final j = jobs[i];
               return ListTile(
                 title: Text(j.merchantName.isNotEmpty ? j.merchantName : '${config.title('job')} ${j.id.substring(0, 8)}'),
-                subtitle: Text('${money(j.totalCents)}: ${config.stateLabel(j.status)}'),
+                subtitle: Text('${config.money(j.totalCents)}: ${config.stateLabel(j.status)}'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => context.push('/jobs/${j.id}/track'),
               );

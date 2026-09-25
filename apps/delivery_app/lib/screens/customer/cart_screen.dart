@@ -47,7 +47,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                       return ListTile(
                         title: Text(line.item.name),
                         subtitle: Text('x${line.quantity}'),
-                        trailing: Text(money(line.subtotalCents)),
+                        trailing: Text(config.money(line.subtotalCents)),
                       );
                     },
                   ),
@@ -61,12 +61,12 @@ class _CartScreenState extends ConsumerState<CartScreen> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           const Text('Subtotal'),
-                          Text(money(subtotal)),
+                          Text(config.money(subtotal)),
                         ],
                       ),
                       const SizedBox(height: 4),
                       Text('The delivery fee is worked out when the ${config.term('job')} is placed.',
-                          style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
                       const SizedBox(height: 12),
                       // Only the methods this platform takes (GET /config): the
                       // server refuses any other.

@@ -72,14 +72,16 @@ class _JobTrackingScreenState extends ConsumerState<JobTrackingScreen> {
                 : FlutterMap(
                     options: MapOptions(
                       initialCenter: ll.LatLng(_agentAt!.lat, _agentAt!.lng),
-                      initialZoom: 14,
+                      // The brand's zoom frames a city; following one agent
+                      // wants a street-level view, so never less than 14.
+                      initialZoom: config.brand.map.zoom < 14 ? 14 : config.brand.map.zoom,
+                      maxZoom: config.brand.map.maxZoom.toDouble(),
                     ),
                     children: [
-                      // Known debt: the tile server moves to configuration
-                      // (Phase D); OpenStreetMap's own servers aren't for
-                      // app traffic.
+                      // The brand's tile provider (docs/MAPS.md).
                       TileLayer(
-                        urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        urlTemplate: config.brand.map.tilesUrl,
+                        maxZoom: config.brand.map.maxZoom.toDouble(),
                         userAgentPackageName: 'com.example.delivery_app',
                       ),
                       MarkerLayer(markers: [
@@ -90,6 +92,8 @@ class _JobTrackingScreenState extends ConsumerState<JobTrackingScreen> {
                           child: Icon(Icons.navigation, color: Theme.of(context).colorScheme.primary, size: 36),
                         ),
                       ]),
+                      // Always on screen: every tile provider's terms ask for it.
+                      SimpleAttributionWidget(source: Text(config.brand.map.attribution)),
                     ],
                   ),
           ),
@@ -137,6 +141,7 @@ class _Progress extends StatelessWidget {
     return Row(
       children: List.generate(steps.length, (i) {
         final reached = current >= 0 && i <= current;
+        final scheme = Theme.of(context).colorScheme;
         return Expanded(
           child: Semantics(
             label: '${steps[i].label}${reached ? ', done' : ''}',
@@ -144,8 +149,8 @@ class _Progress extends StatelessWidget {
               children: [
                 CircleAvatar(
                   radius: 12,
-                  backgroundColor: reached ? Theme.of(context).colorScheme.primary : Colors.grey.shade300,
-                  child: reached ? const Icon(Icons.check, size: 14, color: Colors.white) : null,
+                  backgroundColor: reached ? scheme.primary : scheme.surfaceContainerHighest,
+                  child: reached ? Icon(Icons.check, size: 14, color: scheme.onPrimary) : null,
                 ),
                 const SizedBox(height: 4),
                 Text(steps[i].label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 10)),

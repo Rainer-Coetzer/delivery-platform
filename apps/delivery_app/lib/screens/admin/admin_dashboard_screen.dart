@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/config.dart';
 import '../../providers/providers.dart';
 
 class AdminDashboardScreen extends ConsumerWidget {
@@ -32,7 +31,7 @@ class AdminDashboardScreen extends ConsumerWidget {
                 runSpacing: 12,
                 children: [
                   _StatCard(label: 'Total ${config.term('jobs')}', value: '${data['totalJobs'] ?? 0}'),
-                  _StatCard(label: 'Total revenue', value: money((data['totalRevenueCents'] ?? 0) as num)),
+                  _StatCard(label: 'Total revenue', value: config.money((data['totalRevenueCents'] ?? 0) as num)),
                   _StatCard(
                     label: 'Average time to complete',
                     value: '${((data['avgCompletionMinutes'] ?? 0) as num).toStringAsFixed(1)} min',
@@ -65,7 +64,7 @@ class _StatCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(label, style: const TextStyle(color: Colors.grey)),
+            Text(label, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
             const SizedBox(height: 4),
             Text(value, style: Theme.of(context).textTheme.headlineSmall),
           ],

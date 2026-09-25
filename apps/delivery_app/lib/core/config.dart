@@ -1,7 +1,10 @@
-// The platform's configuration from GET /config: the pack's words, its
-// lifecycle, its modules. Screens read nouns and state labels from here and
-// never hardcode a business: the same app is a food app, a courier app or a
-// freight app depending on the pack the server runs.
+// The platform's configuration from GET /config: the brand (name, colours,
+// currency, map), the pack's words, its lifecycle, its modules. Screens
+// read nouns and state labels from here and never hardcode a business: the
+// same app is a food app, a courier app or a freight app depending on the
+// pack the server runs, under whatever name the buyer gave it.
+import 'brand.dart';
+
 
 class StateInfo {
   final String name;
@@ -20,7 +23,9 @@ class StateInfo {
 }
 
 class AppConfig {
+  final Brand brand;
   final String pack;
+  final List<String> roles; // the roles this platform offers
   final List<String> modules;
   final String stopsTemplate; // merchant_to_customer, point_to_point, multi_stop
   final List<String> paymentMethods;
@@ -28,7 +33,9 @@ class AppConfig {
   final Map<String, String> terms;
 
   const AppConfig({
+    required this.brand,
     required this.pack,
+    required this.roles,
     required this.modules,
     required this.stopsTemplate,
     required this.paymentMethods,
@@ -37,7 +44,9 @@ class AppConfig {
   });
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
+        brand: Brand.fromJson(json['brand'] as Map<String, dynamic>),
         pack: (json['pack'] as Map<String, dynamic>)['name'] as String,
+        roles: List<String>.from(json['roles'] as List? ?? const []),
         modules: List<String>.from(json['modules'] as List? ?? const []),
         stopsTemplate: (json['job'] as Map<String, dynamic>)['stops'] as String,
         paymentMethods: List<String>.from(json['paymentMethods'] as List? ?? const []),
@@ -48,6 +57,12 @@ class AppConfig {
       );
 
   bool has(String module) => modules.contains(module);
+
+  /// Whether anyone can sign up (the brand offers the customer role).
+  bool get openSignUp => roles.contains('customer');
+
+  /// Minor units in the brand's currency.
+  String money(num minor) => brand.currency.format(minor.toInt());
 
   /// The pack's word for a core noun: term('job') is "order" for food,
   /// "delivery" for courier. Falls back to the key itself, readable enough.
@@ -74,7 +89,3 @@ class AppConfig {
   /// minus the cancelled one (a cancelled job shows that instead).
   List<StateInfo> get progress => states.where((s) => s.milestone != 'cancelled').toList();
 }
-
-/// Money in minor units. The currency comes from the platform profile in
-/// Phase D; until then it is Namibian dollars, set only here.
-String money(num cents) => 'N\$${(cents / 100).toStringAsFixed(2)}';

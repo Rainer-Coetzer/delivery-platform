@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'core/brand.dart';
 import 'core/config.dart';
 import 'providers/providers.dart';
 import 'screens/admin/admin_dashboard_screen.dart';
@@ -24,9 +25,11 @@ class DeliveryApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final theme = ThemeData(colorSchemeSeed: Colors.deepOrange, useMaterial3: true);
-    // Every screen speaks the pack's words, so nothing is shown until the
-    // platform config (GET /config) is in.
+    // Every screen speaks the pack's words in the brand's colours, so
+    // nothing is shown until the platform config (GET /config) is in. The
+    // spinner and the error before that use Material's neutral theme:
+    // there is no brand yet to use.
+    final theme = ThemeData(useMaterial3: true);
     return ref.watch(configProvider).when(
           data: (config) {
             // Rebuilding GoRouter on every auth change is a simplification:
@@ -35,8 +38,12 @@ class DeliveryApp extends ConsumerWidget {
             // (the user lands on their role's home screen).
             final auth = ref.watch(authControllerProvider);
             return MaterialApp.router(
-              title: config.title('job'),
-              theme: theme,
+              title: config.brand.name,
+              theme: buildTheme(config.brand),
+              // No animation from the neutral loading theme to the brand's:
+              // it would flash Material purple into the brand's colours on
+              // every start.
+              themeAnimationDuration: Duration.zero,
               routerConfig: _buildRouter(auth, config),
             );
           },

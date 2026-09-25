@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/brand_logo.dart';
 import '../../providers/providers.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -19,6 +20,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authControllerProvider);
+    final config = ref.watch(configProvider).requireValue;
+    final text = Theme.of(context).textTheme;
 
     return Scaffold(
       body: Center(
@@ -30,9 +33,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Icon(Icons.delivery_dining, size: 64, color: Theme.of(context).colorScheme.primary),
+                Center(child: BrandLogo(brand: config.brand)),
                 const SizedBox(height: 8),
-                Text('Delivery Platform', style: Theme.of(context).textTheme.headlineSmall, textAlign: TextAlign.center),
+                Text(config.brand.name, style: text.headlineSmall, textAlign: TextAlign.center),
+                if (config.brand.tagline.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(config.brand.tagline,
+                      style: text.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant), textAlign: TextAlign.center),
+                ],
                 const SizedBox(height: 24),
                 TextField(controller: _email, decoration: const InputDecoration(labelText: 'Email')),
                 const SizedBox(height: 12),
@@ -48,10 +56,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
                       : const Text('Log in'),
                 ),
-                TextButton(
-                  onPressed: () => context.go('/register'),
-                  child: const Text("Don't have an account? Register"),
-                ),
+                // Without a customer role there's no public sign-up
+                // (identity refuses it too): accounts come from an admin.
+                if (config.openSignUp)
+                  TextButton(
+                    onPressed: () => context.go('/register'),
+                    child: const Text("Don't have an account? Register"),
+                  ),
               ],
             ),
           ),

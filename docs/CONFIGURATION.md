@@ -46,6 +46,33 @@ edit needs a restart, not a rebuild).
 | `overrides.terminology` | no | per locale, words that replace the pack's (`agent: rider`) |
 | `overrides.settings` | no | module settings that replace the pack's, a whole module block at a time; checked by the same rules as the pack's own |
 
+## How the app uses your colours
+
+Only `colours.primary` is required. The app builds a Material 3 palette
+from it and uses your other colours where you give them:
+
+| You give | The app uses |
+|---|---|
+| `primary` | buttons, links, progress, the map marker. Words on it are black or white, whichever reads better |
+| `secondary` | accents. Left out: derived from the primary |
+| `background` | every screen's background. Left out: a near-white tint of the primary |
+| `text` | body text. Left out: black or white, whichever reads better on the background |
+
+Captions and hints sit between your text and background colours, so they
+keep your hue and stay readable.
+
+The server refuses a `text` colour that is hard to read on the
+`background` (WCAG AA, contrast under 4.5:1) and names the ratio. The app
+can't make a button unreadable, because it picks black or white for the
+words on it. So a bright primary like `#E4572E` gets black button text:
+white on it is only 3.6:1.
+
+`font` must be a family the app bundles (add it under `flutter: fonts:`
+in `apps/delivery_app/pubspec.yaml`). A name the app doesn't have falls
+back to the platform's font. `GET /config` is cached for five minutes,
+so after a restart it can take that long for open apps to pick up a new
+brand.
+
 A brand's overrides apply only to its own `pack`. If `PACK` in the
 environment picks another pack, the server says so in its log and leaves
 the overrides out.

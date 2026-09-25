@@ -147,7 +147,7 @@ class _CatalogueEditorState extends ConsumerState<_CatalogueEditor> {
                 final item = items[i];
                 return ListTile(
                   title: Text(item.name),
-                  subtitle: Text('${money(item.priceCents)}, stock ${item.stockQty}'),
+                  subtitle: Text('${config.money(item.priceCents)}, stock ${item.stockQty}'),
                   trailing: Switch(
                     value: item.available,
                     onChanged: (v) async {
