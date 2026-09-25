@@ -65,6 +65,9 @@ func build(env events.Envelope) (*store.Notification, error) {
 		if err != nil {
 			return nil, err
 		}
+		if d.MerchantID == "" {
+			return nil, nil // a courier job has no merchant to tell
+		}
 		return &store.Notification{
 			Recipient: "merchant:" + d.MerchantID, JobID: d.JobID, Channel: "in-app",
 			Title: "New job", Body: fmt.Sprintf("Job %s from %s, total N$%.2f", short(d.JobID), d.CustomerName, cents(d.TotalCents)),

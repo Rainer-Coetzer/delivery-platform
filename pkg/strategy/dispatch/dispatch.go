@@ -2,10 +2,9 @@
 // job. The dispatch module finds the candidates (free agents, nearest
 // first) and locks the one the strategy picks; the strategy only chooses.
 //
-// Built-ins: nearest, least_loaded. Others named in ADR-0003 need data or
-// APIs that arrive with their modules: capacity_aware (capacity), manual
-// and open_offer (an assign/accept API). They are not registered until
-// they work.
+// Built-ins: nearest, least_loaded, capacity_aware. With the capacity
+// module on, the dispatch module only offers agents whose vehicle fits,
+// whatever the strategy; capacity_aware then chooses the tightest fit.
 package dispatch
 
 import (
@@ -21,11 +20,15 @@ type Candidate struct {
 	Vehicle          string
 	DistanceMeters   float64 // to the pickup
 	AssignmentsToday int
+	CapacityGrams    int64 // 0 when not declared (only with the capacity module off)
+	CapacityCm3      int64
 }
 
 // Request is the job being dispatched.
 type Request struct {
-	JobID string
+	JobID       string
+	WeightGrams int64 // the job's packages, 0 without the packages module
+	VolumeCm3   int64
 }
 
 // Strategy picks one candidate. Candidates come nearest first; ok=false
@@ -45,6 +48,39 @@ func Names() []string { return registry.Names() }
 func init() {
 	Register("nearest", newNearest)
 	Register("least_loaded", newLeastLoaded)
+	Register("capacity_aware", newCapacityAware)
+}
+
+// --- capacity_aware: the smallest vehicle that fits ---
+
+// capacityAware keeps big vehicles free for big loads: of the agents that
+// fit (the dispatch module has filtered them), it picks the one with the
+// least weight capacity left over, then the least volume, then the
+// nearest. It needs the capacity module (checked at boot).
+type capacityAware struct{}
+
+func newCapacityAware(p strategy.Params) (Strategy, error) {
+	if err := p.Decode(&struct{}{}); err != nil {
+		return nil, err
+	}
+	return capacityAware{}, nil
+}
+
+func (capacityAware) Pick(_ context.Context, req Request, cs []Candidate) (Candidate, bool) {
+	var best Candidate
+	found := false
+	for _, c := range cs {
+		if c.CapacityGrams < req.WeightGrams || c.CapacityCm3 < req.VolumeCm3 {
+			continue // belt and braces: the module filters these out already
+		}
+		spareG, spareV := c.CapacityGrams-req.WeightGrams, c.CapacityCm3-req.VolumeCm3
+		bestG, bestV := best.CapacityGrams-req.WeightGrams, best.CapacityCm3-req.VolumeCm3
+		// Candidates are nearest first, so strict < keeps the nearer on a tie.
+		if !found || spareG < bestG || (spareG == bestG && spareV < bestV) {
+			best, found = c, true
+		}
+	}
+	return best, found
 }
 
 // --- nearest: the closest free agent ---

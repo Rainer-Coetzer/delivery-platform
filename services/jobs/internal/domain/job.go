@@ -17,11 +17,20 @@ import (
 // ErrNoSuchStop: an event names a stop the job doesn't have.
 var ErrNoSuchStop = errors.New("job has no such stop")
 
+// Item is a job line: a catalogue item (priced by the merchant) or a
+// package (declared by the customer, sized but not priced per line).
 type Item struct {
-	CatalogueItemID string `json:"catalogueItemId"`
+	Kind            string `json:"kind"`
+	CatalogueItemID string `json:"catalogueItemId,omitempty"`
 	Name            string `json:"name"`
 	Quantity        int    `json:"quantity"`
 	UnitPriceCents  int64  `json:"unitPriceCents"`
+	// Package lines only.
+	WeightGrams        int64 `json:"weightGrams,omitempty"`
+	LengthMm           int   `json:"lengthMm,omitempty"`
+	WidthMm            int   `json:"widthMm,omitempty"`
+	HeightMm           int   `json:"heightMm,omitempty"`
+	DeclaredValueCents int64 `json:"declaredValueCents,omitempty"`
 }
 
 // Stop is a place the job visits, plus when the agent finished it.
@@ -150,6 +159,20 @@ func (j *Job) lastSeq() int {
 		last = max(last, s.Seq)
 	}
 	return last
+}
+
+// EventLines is the lines in their event shape.
+func (j *Job) EventLines() []events.JobLine {
+	out := make([]events.JobLine, 0, len(j.Items))
+	for _, it := range j.Items {
+		l := events.JobLine{Kind: it.Kind, CatalogueItemID: it.CatalogueItemID, Name: it.Name, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents}
+		if it.Kind == LinePackage {
+			l.WeightGrams = it.WeightGrams
+			l.VolumeCm3 = SizeOf([]Item{{Kind: LinePackage, Quantity: 1, LengthMm: it.LengthMm, WidthMm: it.WidthMm, HeightMm: it.HeightMm}}).VolumeCm3
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 // EventStops is the stops in their event shape, for jobs.created and the

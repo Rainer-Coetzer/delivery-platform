@@ -97,7 +97,7 @@ func TestRouteRoles(t *testing.T) {
 	}
 }
 
-func TestValidDropoff(t *testing.T) {
+func TestValidPoint(t *testing.T) {
 	cases := []struct {
 		name     string
 		lat, lng float64
@@ -110,8 +110,8 @@ func TestValidDropoff(t *testing.T) {
 		{"equator is fine when lng isn't 0", 0, 17.08, true},
 	}
 	for _, c := range cases {
-		if got := validDropoff(events.Location{Lat: c.lat, Lng: c.lng}); got != c.want {
-			t.Errorf("%s: validDropoff = %v, want %v", c.name, got, c.want)
+		if got := validPoint(events.Location{Lat: c.lat, Lng: c.lng}); got != c.want {
+			t.Errorf("%s: validPoint = %v, want %v", c.name, got, c.want)
 		}
 	}
 }

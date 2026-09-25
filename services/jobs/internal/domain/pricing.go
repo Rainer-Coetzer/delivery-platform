@@ -50,7 +50,7 @@ func PriceItems(lines []RequestedLine, catalogue map[string]CatalogueItem) ([]It
 		if !c.Available {
 			return nil, 0, fmt.Errorf("%w: %s is currently unavailable", ErrBadItems, c.Name)
 		}
-		items = append(items, Item{CatalogueItemID: c.ID, Name: c.Name, Quantity: l.Quantity, UnitPriceCents: c.PriceCents})
+		items = append(items, Item{Kind: LineCatalogue, CatalogueItemID: c.ID, Name: c.Name, Quantity: l.Quantity, UnitPriceCents: c.PriceCents})
 		subtotal += c.PriceCents * int64(l.Quantity)
 	}
 	return items, subtotal, nil

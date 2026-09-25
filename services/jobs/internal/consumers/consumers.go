@@ -29,6 +29,7 @@ type Handlers struct {
 	Pool      *db.Pool
 	Log       *slog.Logger
 	Lifecycle *lifecycle.Machine
+	Requires  []string // the pack's job.requires
 }
 
 // Topics is what the lifecycle reacts to, plus dispatch.assigned. A pack
@@ -100,14 +101,15 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 		if err := store.Save(ctx, tx, j, steps); err != nil {
 			return err
 		}
-		return PublishSteps(ctx, tx, j, steps)
+		return PublishSteps(ctx, tx, j, h.Requires, steps)
 	})
 }
 
 // PublishSteps writes one jobs.status-changed per step, plus jobs.cancelled
-// if the job reached the cancelled milestone. The api package uses it too
+// if the job reached the cancelled milestone. requires is the pack's
+// job.requires, handed to dispatch with the job's size. The api package uses it too
 // (role triggers, settling on creation).
-func PublishSteps(ctx context.Context, tx pgx.Tx, j *domain.Job, steps []lifecycle.Step) error {
+func PublishSteps(ctx context.Context, tx pgx.Tx, j *domain.Job, requires []string, steps []lifecycle.Step) error {
 	for _, s := range steps {
 		data := events.JobStatusChangedData{
 			JobID: j.ID, CustomerID: j.CustomerID, MerchantID: j.MerchantID, AgentID: j.AgentID,
@@ -118,6 +120,9 @@ func PublishSteps(ctx context.Context, tx pgx.Tx, j *domain.Job, steps []lifecyc
 		}
 		if s.Milestone == lifecycle.ReadyForDispatch {
 			data.Stops = j.EventStops()
+			size := domain.SizeOf(j.Items)
+			data.Size = &events.JobSize{WeightGrams: size.WeightGrams, VolumeCm3: size.VolumeCm3}
+			data.Requires = requires
 		}
 		env, err := events.New(events.JobStatusChanged, j.ID, data)
 		if err != nil {
@@ -131,12 +136,8 @@ func PublishSteps(ctx context.Context, tx pgx.Tx, j *domain.Job, steps []lifecyc
 		}
 		// jobs.cancelled carries the lines so the merchant can release
 		// stock, and is what payment refunds on.
-		lines := make([]events.JobLine, 0, len(j.Items))
-		for _, it := range j.Items {
-			lines = append(lines, events.JobLine{CatalogueItemID: it.CatalogueItemID, Name: it.Name, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents})
-		}
 		cancelled, err := events.New(events.JobCancelled, j.ID, events.JobCancelledData{
-			JobID: j.ID, CustomerID: j.CustomerID, MerchantID: j.MerchantID, Items: lines, Reason: j.CancelReason,
+			JobID: j.ID, CustomerID: j.CustomerID, MerchantID: j.MerchantID, Items: j.EventLines(), Reason: j.CancelReason,
 		})
 		if err != nil {
 			return err

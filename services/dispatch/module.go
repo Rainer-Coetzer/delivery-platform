@@ -7,6 +7,7 @@ import (
 
 	"github.com/rainercoetzer/delivery-platform/pkg/app"
 	"github.com/rainercoetzer/delivery-platform/pkg/config"
+	"github.com/rainercoetzer/delivery-platform/pkg/packs"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/api"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/consumers"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/migrations"
@@ -35,7 +36,7 @@ func newModule(d app.Deps) (*app.Module, error) {
 	d.Log.Info("agent simulation", "autopilot", autopilot, "stepMeters", stepMeters)
 
 	st := store.New(d.Pool)
-	dispatcher := &consumers.Dispatcher{Strategy: d.Strategies.Dispatch, ETA: d.Strategies.ETA}
+	dispatcher := &consumers.Dispatcher{Strategy: d.Strategies.Dispatch, ETA: d.Strategies.ETA, Capacity: d.Pack.Has(packs.ModCapacity)}
 	h := &consumers.Handlers{Pool: d.Pool, Log: d.Log, Dispatcher: dispatcher}
 	retrier := &sim.PendingAssignmentRetrier{Pool: d.Pool, Store: st, Log: d.Log, Dispatcher: dispatcher}
 	// Location pings go straight to the bus, not the outbox: ephemeral

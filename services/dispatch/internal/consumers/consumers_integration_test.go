@@ -276,3 +276,59 @@ func TestLeastLoadedUsesTodaysAssignments(t *testing.T) {
 		t.Fatalf("least_loaded should pick the idle agent %s, got %+v %v", far, a, err)
 	}
 }
+
+func vehicle(t *testing.T, st *store.Store, lat, lng float64, grams, cm3 int64, caps ...string) string {
+	t.Helper()
+	ctx := context.Background()
+	d := &store.Agent{ID: uuid.NewString(), Name: "Vehicle", Vehicle: "van", Status: "OFFLINE", Lat: lat, Lng: lng,
+		CapacityGrams: grams, CapacityCm3: cm3, Capabilities: caps}
+	if err := st.RegisterAgent(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetAgentStatus(ctx, d.ID, "AVAILABLE"); err != nil {
+		t.Fatal(err)
+	}
+	return d.ID
+}
+
+func sized(t *testing.T, jobID string, grams, cm3 int64, requires ...string) events.Envelope {
+	env := ready(t, jobID)
+	var d events.JobStatusChangedData
+	if err := json.Unmarshal(env.Data, &d); err != nil {
+		t.Fatal(err)
+	}
+	d.Size = &events.JobSize{WeightGrams: grams, VolumeCm3: cm3}
+	d.Requires = requires
+	return envelope(t, events.JobStatusChanged, jobID, d)
+}
+
+// With the capacity module on, only a vehicle that carries the load and
+// has every required capability is a candidate, however near the others.
+func TestCapacityFiltersCandidates(t *testing.T) {
+	h, _, st := setupWith(t, "nearest", "")
+	h.Dispatcher.Capacity = true
+	ctx := context.Background()
+	availableAgentAt(t, st, pickup.Lat, pickup.Lng)                                      // right there, capacity not declared
+	vehicle(t, st, pickup.Lat, pickup.Lng, 15_000, 60_000)                               // bike: too small
+	van := vehicle(t, st, pickup.Lat+0.01, pickup.Lng, 800_000, 6_000_000, "cold_chain") // further, fits
+
+	cold := uuid.NewString()
+	if err := h.Handle(ctx, sized(t, cold, 100_000, 500_000, "cold_chain")); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := st.GetByJob(ctx, cold); err != nil || a.AgentID != van {
+		t.Fatalf("the cold van should get it: %+v %v", a, err)
+	}
+
+	hazmat := uuid.NewString()
+	if err := h.Handle(ctx, sized(t, hazmat, 1_000, 1_000, "hazmat")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetByJob(ctx, hazmat); err != store.ErrNotFound {
+		t.Fatalf("nobody can carry hazmat: the job must wait, got %v", err)
+	}
+	pending, err := st.ListPending(ctx)
+	if err != nil || len(pending) != 1 || pending[0].WeightGrams != 1_000 || len(pending[0].Requires) != 1 {
+		t.Fatalf("the waiting job keeps its size and needs for the retry: %+v %v", pending, err)
+	}
+}

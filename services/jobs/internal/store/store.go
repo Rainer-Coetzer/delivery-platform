@@ -45,9 +45,12 @@ func Create(ctx context.Context, tx pgx.Tx, j *domain.Job, initial string, settl
 	}
 	for _, item := range j.Items {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO job_lines (job_id, catalogue_item_id, name, quantity, unit_price_cents)
-			VALUES ($1,$2,$3,$4,$5)`,
-			j.ID, item.CatalogueItemID, item.Name, item.Quantity, item.UnitPriceCents)
+			INSERT INTO job_lines (job_id, kind, catalogue_item_id, name, quantity, unit_price_cents,
+				weight_g, length_mm, width_mm, height_mm, declared_value_cents)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+			j.ID, item.Kind, nullStr(item.CatalogueItemID), item.Name, item.Quantity, item.UnitPriceCents,
+			nullInt(item.WeightGrams), nullInt(int64(item.LengthMm)), nullInt(int64(item.WidthMm)), nullInt(int64(item.HeightMm)),
+			nullInt(item.DeclaredValueCents))
 		if err != nil {
 			return fmt.Errorf("insert job line: %w", err)
 		}
@@ -177,7 +180,10 @@ func (s *Store) list(ctx context.Context, query string, args ...any) ([]*domain.
 }
 
 func items(ctx context.Context, q queryer, jobID string) ([]domain.Item, error) {
-	rows, err := q.Query(ctx, `SELECT catalogue_item_id, name, quantity, unit_price_cents FROM job_lines WHERE job_id = $1 ORDER BY id`, jobID)
+	rows, err := q.Query(ctx, `
+		SELECT kind, coalesce(catalogue_item_id,''), name, quantity, unit_price_cents, coalesce(weight_g,0),
+			coalesce(length_mm,0), coalesce(width_mm,0), coalesce(height_mm,0), coalesce(declared_value_cents,0)
+		FROM job_lines WHERE job_id = $1 ORDER BY id`, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("list job lines: %w", err)
 	}
@@ -185,7 +191,8 @@ func items(ctx context.Context, q queryer, jobID string) ([]domain.Item, error) 
 	out := []domain.Item{}
 	for rows.Next() {
 		var it domain.Item
-		if err := rows.Scan(&it.CatalogueItemID, &it.Name, &it.Quantity, &it.UnitPriceCents); err != nil {
+		if err := rows.Scan(&it.Kind, &it.CatalogueItemID, &it.Name, &it.Quantity, &it.UnitPriceCents, &it.WeightGrams,
+			&it.LengthMm, &it.WidthMm, &it.HeightMm, &it.DeclaredValueCents); err != nil {
 			return nil, fmt.Errorf("scan job line: %w", err)
 		}
 		out = append(out, it)
@@ -212,12 +219,13 @@ func stops(ctx context.Context, q queryer, jobID string) ([]domain.Stop, error) 
 	return out, rows.Err()
 }
 
-// CountOpen returns how many of merchantID's jobs haven't finished, for the
-// surge multiplier.
+// CountOpen returns how many jobs haven't finished, for surge pricing: the
+// merchant's own when there is one (a busy kitchen), all of them when
+// there isn't (courier jobs share one pool of agents).
 func (s *Store) CountOpen(ctx context.Context, merchantID string) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx,
-		`SELECT count(*) FROM jobs WHERE merchant_id=$1 AND milestone NOT IN ('completed','cancelled')`,
+		`SELECT count(*) FROM jobs WHERE ($1 = '' OR merchant_id = $1) AND milestone NOT IN ('completed','cancelled')`,
 		merchantID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count open jobs: %w", err)
@@ -265,6 +273,13 @@ func factsJSON(f map[string]bool) ([]byte, error) {
 		return nil, fmt.Errorf("encode facts: %w", err)
 	}
 	return b, nil
+}
+
+func nullInt(v int64) any {
+	if v == 0 {
+		return nil
+	}
+	return v
 }
 
 func nullStr(s string) any {

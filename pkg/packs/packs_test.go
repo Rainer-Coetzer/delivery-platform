@@ -98,6 +98,8 @@ func TestLoad_Invalid(t *testing.T) {
 		{"proof on a stop kind that doesn't exist", strings.Replace(goodPack, "dropoff: photo", "doorstep: photo", 1), `"doorstep" is not a stop kind`},
 		{"module without its settings", strings.Replace(goodPack, "  proof: { pin_attempts: 5, max_photo_bytes: 5000000 }\n", "", 1), "the proof module needs settings.proof"},
 		{"settings without the module", goodPack + "  multi-stop: { max_stops: 5 }\n", "settings.multi-stop is set but the multi-stop module isn't enabled"},
+		{"customer route with catalogue lines", strings.Replace(strings.Replace(goodPack, "lines: packages", "lines: catalogue", 1), "[packages, proof]", "[catalogue, packages, proof]", 1), "point_to_point needs lines: packages"},
+		{"requires without capacity", strings.Replace(goodPack, "  proof: { dropoff: photo }\n", "  proof: { dropoff: photo }\n  requires: [cold_chain]\n", 1), "capacity module isn't enabled"},
 		{"a zero limit", strings.Replace(goodPack, "max_weight_g: 30000", "max_weight_g: 0", 1), "settings.packages.max_weight_g must be > 0"},
 		{"settings typo", strings.Replace(goodPack, "pin_attempts", "pin_attempt", 1), "field pin_attempt not found"},
 		{"multi_stop needs module", strings.Replace(goodPack, "stops: point_to_point", "stops: multi_stop", 1), "multi_stop needs the multi-stop module"},

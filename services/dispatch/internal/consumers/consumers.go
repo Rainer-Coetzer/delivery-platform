@@ -82,11 +82,16 @@ func RouteFor(data events.JobStatusChangedData) (*store.Route, error) {
 			last = s
 		}
 	}
-	return &store.Route{
+	r := &store.Route{
 		JobID: data.JobID, MerchantID: pickup.MerchantID,
 		PickupLat: pickup.Location.Lat, PickupLng: pickup.Location.Lng, PickupSeq: pickup.Seq,
 		DropoffLat: last.Location.Lat, DropoffLng: last.Location.Lng, DropoffSeq: last.Seq,
-	}, nil
+		Requires: data.Requires,
+	}
+	if data.Size != nil {
+		r.WeightGrams, r.VolumeCm3 = data.Size.WeightGrams, data.Size.VolumeCm3
+	}
+	return r, nil
 }
 
 func (h *Handlers) handleReady(ctx context.Context, env events.Envelope, route *store.Route) error {
@@ -162,6 +167,9 @@ const (
 type Dispatcher struct {
 	Strategy dispatchstrategy.Strategy
 	ETA      eta.Estimator
+	// Capacity is the pack's capacity module: only agents whose vehicle
+	// fits the job, and has what it requires, are candidates.
+	Capacity bool
 }
 
 // maxCandidates bounds how many free agents a strategy chooses among: the
@@ -221,16 +229,17 @@ func (d *Dispatcher) TryAssign(ctx context.Context, tx pgx.Tx, r *store.Route) (
 // claim returns the locked agent the strategy picked, or nil if nobody
 // suitable is free.
 func (d *Dispatcher) claim(ctx context.Context, tx pgx.Tx, r *store.Route) (*store.Candidate, error) {
-	found, err := store.AvailableCandidates(ctx, tx, r.PickupLat, r.PickupLng, maxCandidates)
+	found, err := store.AvailableCandidates(ctx, tx, r, d.Capacity, maxCandidates)
 	if err != nil {
 		return nil, err
 	}
 	for len(found) > 0 {
 		options := make([]dispatchstrategy.Candidate, len(found))
 		for i, c := range found {
-			options[i] = dispatchstrategy.Candidate{ID: c.ID, Vehicle: c.Vehicle, DistanceMeters: c.DistanceMeters, AssignmentsToday: c.AssignmentsToday}
+			options[i] = dispatchstrategy.Candidate{ID: c.ID, Vehicle: c.Vehicle, DistanceMeters: c.DistanceMeters, AssignmentsToday: c.AssignmentsToday,
+				CapacityGrams: c.CapacityGrams, CapacityCm3: c.CapacityCm3}
 		}
-		pick, ok := d.Strategy.Pick(ctx, dispatchstrategy.Request{JobID: r.JobID}, options)
+		pick, ok := d.Strategy.Pick(ctx, dispatchstrategy.Request{JobID: r.JobID, WeightGrams: r.WeightGrams, VolumeCm3: r.VolumeCm3}, options)
 		if !ok {
 			return nil, nil
 		}

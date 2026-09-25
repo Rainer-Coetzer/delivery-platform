@@ -19,7 +19,7 @@ var Definition = app.Definition{
 }
 
 func newModule(d app.Deps) (*app.Module, error) {
-	h := &consumers.Handlers{Pool: d.Pool, Log: d.Log, Lifecycle: d.Pack.Lifecycle}
+	h := &consumers.Handlers{Pool: d.Pool, Log: d.Log, Lifecycle: d.Pack.Lifecycle, Requires: d.Pack.Job.Requires}
 	a := &api.API{
 		Pool: d.Pool, Store: store.New(d.Pool), Log: d.Log, Auth: d.Auth, Pack: d.Pack,
 		Pricing: d.Strategies.Pricing, Payments: d.Strategies.Payments,

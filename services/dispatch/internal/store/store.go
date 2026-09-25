@@ -21,6 +21,11 @@ type Agent struct {
 	Status  string  `json:"status"`
 	Lat     float64 `json:"lat"`
 	Lng     float64 `json:"lng"`
+	// Capacity module: what the vehicle carries (0 = not declared) and
+	// what it can do (cold_chain, tail_lift, ...).
+	CapacityGrams int64    `json:"capacityGrams,omitempty"`
+	CapacityCm3   int64    `json:"capacityCm3,omitempty"`
+	Capabilities  []string `json:"capabilities"`
 }
 
 type Assignment struct {
@@ -47,9 +52,9 @@ func New(pool *db.Pool) *Store { return &Store{pool: pool} }
 
 func (s *Store) RegisterAgent(ctx context.Context, d *Agent) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO agents (id, name, vehicle, status, lat, lng, location)
-		VALUES ($1,$2,$3,$4,$5,$6, ST_SetSRID(ST_MakePoint($6,$5), 4326))`,
-		d.ID, d.Name, d.Vehicle, d.Status, d.Lat, d.Lng)
+		INSERT INTO agents (id, name, vehicle, status, lat, lng, location, capacity_g, capacity_cm3, capabilities)
+		VALUES ($1,$2,$3,$4,$5,$6, ST_SetSRID(ST_MakePoint($6,$5), 4326), $7, $8, $9)`,
+		d.ID, d.Name, d.Vehicle, d.Status, d.Lat, d.Lng, nullInt(d.CapacityGrams), nullInt(d.CapacityCm3), capabilities(d.Capabilities))
 	if err != nil {
 		return fmt.Errorf("insert agent: %w", err)
 	}
@@ -80,7 +85,7 @@ func (s *Store) SetAgentStatus(ctx context.Context, id, status string) error {
 }
 
 func (s *Store) ListAgents(ctx context.Context) ([]*Agent, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, name, vehicle, status, lat, lng FROM agents ORDER BY name`)
+	rows, err := s.pool.Query(ctx, `SELECT id, name, vehicle, status, lat, lng, coalesce(capacity_g,0), coalesce(capacity_cm3,0), capabilities FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list agents: %w", err)
 	}
@@ -88,7 +93,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]*Agent, error) {
 	var out []*Agent
 	for rows.Next() {
 		d := &Agent{}
-		if err := rows.Scan(&d.ID, &d.Name, &d.Vehicle, &d.Status, &d.Lat, &d.Lng); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &d.Vehicle, &d.Status, &d.Lat, &d.Lng, &d.CapacityGrams, &d.CapacityCm3, &d.Capabilities); err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
 		out = append(out, d)
@@ -103,20 +108,25 @@ type Candidate struct {
 	AssignmentsToday int
 }
 
-// AvailableCandidates lists up to limit AVAILABLE agents, nearest to (lat,
-// lng) first (the PostGIS <-> operator on the GiST index of
-// agents.location). Nothing is locked: the strategy picks, then
-// LockAvailable claims the pick, which may have gone meanwhile.
-func AvailableCandidates(ctx context.Context, tx pgx.Tx, lat, lng float64, limit int) ([]Candidate, error) {
+// AvailableCandidates lists up to limit AVAILABLE agents, nearest to the
+// route's pickup first (the PostGIS <-> operator on the GiST index of
+// agents.location). With capacity on, only agents whose declared vehicle
+// fits the job and has every required capability: filtered in SQL, so a
+// fitting truck behind twenty unfitting vans is still found. Nothing is
+// locked: the strategy picks, then LockAvailable claims the pick, which
+// may have gone meanwhile.
+func AvailableCandidates(ctx context.Context, tx pgx.Tx, r *Route, capacity bool, limit int) ([]Candidate, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT a.id, a.name, a.vehicle, a.status, a.lat, a.lng,
+		       coalesce(a.capacity_g,0), coalesce(a.capacity_cm3,0), a.capabilities,
 		       ST_Distance(a.location, ST_SetSRID(ST_MakePoint($1,$2), 4326)::geography),
 		       (SELECT count(*) FROM assignments s WHERE s.agent_id = a.id AND s.created_at >= date_trunc('day', now()))
 		FROM agents a
 		WHERE a.status = 'AVAILABLE'
+		  AND (NOT $4 OR (a.capacity_g >= $5 AND a.capacity_cm3 >= $6 AND a.capabilities @> $7))
 		ORDER BY a.location <-> ST_SetSRID(ST_MakePoint($1,$2), 4326)
 		LIMIT $3`,
-		lng, lat, limit)
+		r.PickupLng, r.PickupLat, limit, capacity, r.WeightGrams, r.VolumeCm3, capabilities(r.Requires))
 	if err != nil {
 		return nil, fmt.Errorf("list available agents: %w", err)
 	}
@@ -124,7 +134,8 @@ func AvailableCandidates(ctx context.Context, tx pgx.Tx, lat, lng float64, limit
 	var out []Candidate
 	for rows.Next() {
 		var c Candidate
-		if err := rows.Scan(&c.ID, &c.Name, &c.Vehicle, &c.Status, &c.Lat, &c.Lng, &c.DistanceMeters, &c.AssignmentsToday); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Vehicle, &c.Status, &c.Lat, &c.Lng, &c.CapacityGrams, &c.CapacityCm3, &c.Capabilities,
+			&c.DistanceMeters, &c.AssignmentsToday); err != nil {
 			return nil, fmt.Errorf("scan available agent: %w", err)
 		}
 		out = append(out, c)
@@ -242,8 +253,8 @@ func GetByJobForUpdate(ctx context.Context, tx pgx.Tx, jobID string) (*Assignmen
 
 func (s *Store) GetAgent(ctx context.Context, id string) (*Agent, error) {
 	d := &Agent{}
-	err := s.pool.QueryRow(ctx, `SELECT id, name, vehicle, status, lat, lng FROM agents WHERE id=$1`, id).
-		Scan(&d.ID, &d.Name, &d.Vehicle, &d.Status, &d.Lat, &d.Lng)
+	err := s.pool.QueryRow(ctx, `SELECT id, name, vehicle, status, lat, lng, coalesce(capacity_g,0), coalesce(capacity_cm3,0), capabilities FROM agents WHERE id=$1`, id).
+		Scan(&d.ID, &d.Name, &d.Vehicle, &d.Status, &d.Lat, &d.Lng, &d.CapacityGrams, &d.CapacityCm3, &d.Capabilities)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -328,13 +339,19 @@ type Route struct {
 	DropoffLng float64
 	PickupSeq  int
 	DropoffSeq int
+	// Capacity module: the job's size and the capabilities it needs.
+	WeightGrams int64
+	VolumeCm3   int64
+	Requires    []string
 }
 
 func InsertPending(ctx context.Context, tx pgx.Tx, p *Route) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO pending_assignments (job_id, merchant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (job_id) DO NOTHING`,
-		p.JobID, nullStr(p.MerchantID), p.PickupLat, p.PickupLng, p.DropoffLat, p.DropoffLng, p.PickupSeq, p.DropoffSeq)
+		INSERT INTO pending_assignments (job_id, merchant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq,
+			weight_g, volume_cm3, requires)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (job_id) DO NOTHING`,
+		p.JobID, nullStr(p.MerchantID), p.PickupLat, p.PickupLng, p.DropoffLat, p.DropoffLng, p.PickupSeq, p.DropoffSeq,
+		p.WeightGrams, p.VolumeCm3, capabilities(p.Requires))
 	if err != nil {
 		return fmt.Errorf("insert pending assignment: %w", err)
 	}
@@ -350,7 +367,8 @@ func DeletePending(ctx context.Context, tx pgx.Tx, jobID string) error {
 }
 
 func (s *Store) ListPending(ctx context.Context) ([]*Route, error) {
-	rows, err := s.pool.Query(ctx, `SELECT job_id, coalesce(merchant_id,''), pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq
+	rows, err := s.pool.Query(ctx, `SELECT job_id, coalesce(merchant_id,''), pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq,
+		weight_g, volume_cm3, requires
 		FROM pending_assignments ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list pending assignments: %w", err)
@@ -359,12 +377,29 @@ func (s *Store) ListPending(ctx context.Context) ([]*Route, error) {
 	var out []*Route
 	for rows.Next() {
 		p := &Route{}
-		if err := rows.Scan(&p.JobID, &p.MerchantID, &p.PickupLat, &p.PickupLng, &p.DropoffLat, &p.DropoffLng, &p.PickupSeq, &p.DropoffSeq); err != nil {
+		if err := rows.Scan(&p.JobID, &p.MerchantID, &p.PickupLat, &p.PickupLng, &p.DropoffLat, &p.DropoffLng, &p.PickupSeq, &p.DropoffSeq,
+			&p.WeightGrams, &p.VolumeCm3, &p.Requires); err != nil {
 			return nil, fmt.Errorf("scan pending assignment: %w", err)
 		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+func nullInt(v int64) any {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
+// capabilities makes a nil list an empty array: Postgres' @> against NULL
+// is NULL, which would silently match nothing.
+func capabilities(c []string) []string {
+	if c == nil {
+		return []string{}
+	}
+	return c
 }
 
 func nullStr(s string) any {

@@ -67,24 +67,55 @@ type requestedItem struct {
 	UnitPriceCents int64  `json:"unitPriceCents,omitempty"`
 }
 
+// createJobRequest carries what each stop template needs; which fields
+// count depends on the pack (job.stops, job.lines).
 type createJobRequest struct {
-	MerchantID    string          `json:"merchantId"`
-	Items         []requestedItem `json:"items"`
-	PaymentMethod string          `json:"paymentMethod"`
-	Dropoff       events.Location `json:"dropoff"`
+	PaymentMethod string `json:"paymentMethod"`
 
-	// Ignored, for the same compatibility reason: the customer is whoever
-	// the token says, and pickup is the merchant's own location.
-	CustomerID   string          `json:"customerId,omitempty"`
-	CustomerName string          `json:"customerName,omitempty"`
-	MerchantName string          `json:"merchantName,omitempty"`
-	Pickup       events.Location `json:"pickup,omitempty"`
+	// merchant_to_customer: the merchant and its catalogue items. Pickup is
+	// the merchant's own location, never the client's say-so.
+	MerchantID string          `json:"merchantId"`
+	Items      []requestedItem `json:"items"`
+
+	// point_to_point: the customer names both ends.
+	Pickup  events.Location `json:"pickup"`
+	Dropoff events.Location `json:"dropoff"`
+
+	// packages module: what is being moved.
+	Packages []domain.RequestedPackage `json:"packages"`
+
+	// Ignored, for compatibility: the customer is whoever the token says.
+	CustomerID   string `json:"customerId,omitempty"`
+	CustomerName string `json:"customerName,omitempty"`
+	MerchantName string `json:"merchantName,omitempty"`
 }
 
-// createJob prices the job from the merchant's catalogue, persists it
-// with its outbox row in one transaction, and returns 201. The outbox relay
-// then publishes jobs.created, and merchant and payment race to confirm
-// it (topics in pkg/events).
+// jobPlan is what a stop template works out before pricing: the route, the
+// lines and, for merchant jobs, who the merchant is.
+type jobPlan struct {
+	merchantID, merchantName string
+	stops                    []domain.Stop
+	items                    []domain.Item
+	subtotalCents            int64
+}
+
+// requestError is a request a template refuses, with the status to answer.
+type requestError struct {
+	status  int
+	code    string
+	message string
+}
+
+func (e *requestError) Error() string { return e.message }
+
+func badRequest(msg string) *requestError {
+	return &requestError{status: http.StatusBadRequest, code: "bad_request", message: msg}
+}
+
+// createJob plans the job by the pack's stop template, prices it with the
+// pack's pricing policy, persists it with its outbox row in one
+// transaction, and returns 201. The outbox relay then publishes
+// jobs.created, and the pack's lifecycle takes it from there.
 func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 	caller := auth.MustFromContext(r.Context())
 	var req createJobRequest
@@ -92,65 +123,46 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, "invalid request body: "+err.Error())
 		return
 	}
-	// Other stop templates (courier's point_to_point, freight's multi_stop)
-	// arrive with their packs; until then, say so rather than guess.
-	if a.Pack.Job.Stops != packs.StopsMerchantToCustomer {
-		httpx.WriteError(w, http.StatusNotImplemented, "not_implemented",
-			"pack "+a.Pack.Name+" uses stops: "+a.Pack.Job.Stops+", which job creation doesn't support yet")
-		return
-	}
-	if req.MerchantID == "" || req.PaymentMethod == "" {
-		httpx.BadRequest(w, "merchantId and paymentMethod are required")
+	if req.PaymentMethod == "" {
+		httpx.BadRequest(w, "paymentMethod is required")
 		return
 	}
 	if _, ok := a.Payments.For(req.PaymentMethod); !ok {
 		httpx.BadRequest(w, "paymentMethod must be one of: "+strings.Join(a.Payments.Methods(), ", "))
 		return
 	}
-	if !validDropoff(req.Dropoff) {
-		httpx.BadRequest(w, "dropoff must be a real coordinate (lat -90..90, lng -180..180)")
-		return
-	}
 
 	ctx := r.Context()
-	rest, offered, err := a.Catalogue.Fetch(ctx, r.Header.Get("Authorization"), req.MerchantID)
-	if errors.Is(err, catalogue.ErrMerchantNotFound) {
-		httpx.BadRequest(w, "merchant not found")
-		return
+	var plan *jobPlan
+	var reqErr *requestError
+	switch a.Pack.Job.Stops {
+	case packs.StopsMerchantToCustomer:
+		plan, reqErr = a.planMerchantJob(ctx, r.Header.Get("Authorization"), req)
+	case packs.StopsPointToPoint:
+		plan, reqErr = a.planPointToPoint(req)
+	default:
+		reqErr = &requestError{status: http.StatusNotImplemented, code: "not_implemented",
+			message: "pack " + a.Pack.Name + " uses stops: " + a.Pack.Job.Stops + ", which job creation doesn't support yet"}
 	}
-	if err != nil {
-		a.Log.Error("fetch catalogue", "merchantId", req.MerchantID, "error", err)
-		httpx.WriteError(w, http.StatusBadGateway, "upstream_unavailable", "could not load the merchant's catalogue, try again")
+	if reqErr != nil {
+		httpx.WriteError(w, reqErr.status, reqErr.code, reqErr.message)
 		return
 	}
 
-	lines := make([]domain.RequestedLine, 0, len(req.Items))
-	for _, it := range req.Items {
-		lines = append(lines, domain.RequestedLine{CatalogueItemID: it.CatalogueItemID, Quantity: it.Quantity})
-	}
-	items, subtotal, err := domain.PriceItems(lines, offered)
-	if err != nil {
-		httpx.BadRequest(w, err.Error())
-		return
-	}
-	stops := []domain.Stop{
-		{Stop: events.Stop{Seq: 0, Kind: events.StopPickup, MerchantID: rest.ID,
-			Location: events.Location{Lat: rest.Lat, Lng: rest.Lng, Label: rest.Name}}},
-		{Stop: events.Stop{Seq: 1, Kind: events.StopDropoff, Location: req.Dropoff}},
-	}
-
-	openJobs, err := a.Store.CountOpen(ctx, req.MerchantID)
+	openJobs, err := a.Store.CountOpen(ctx, plan.merchantID)
 	if err != nil {
 		a.Log.Error("count open jobs", "error", err)
 		httpx.Internal(w, "could not price job")
 		return
 	}
+	size := domain.SizeOf(plan.items)
 	q, err := a.Pricing.Price(ctx, pricing.Input{
-		SubtotalCents: subtotal,
-		Stops:         (&domain.Job{Stops: stops}).EventStops(),
-		// Known debt (audit P1): the load is one merchant's open jobs over a
-		// fixed agent estimate. The jobs module doesn't know how many agents
-		// are free; dispatch does, and doesn't publish it yet.
+		SubtotalCents: plan.subtotalCents,
+		Stops:         (&domain.Job{Stops: plan.stops}).EventStops(),
+		WeightGrams:   size.WeightGrams,
+		// Known debt (audit P1): the load is open jobs over a fixed agent
+		// estimate. The jobs module doesn't know how many agents are free;
+		// dispatch does, and doesn't publish it yet.
 		Load: pricing.Load{OpenJobs: openJobs, FreeAgents: assumedFreeAgents},
 	})
 	if errors.Is(err, pricing.ErrNoFare) {
@@ -169,28 +181,24 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		Pack:             a.Pack.Name,
 		CustomerID:       caller.UserID,
 		CustomerName:     caller.Name,
-		MerchantID:       rest.ID,
-		MerchantName:     rest.Name,
+		MerchantID:       plan.merchantID,
+		MerchantName:     plan.merchantName,
 		Status:           m.Initial,
 		Milestone:        lifecycle.Created,
 		Facts:            map[string]bool{},
-		Items:            items,
+		Items:            plan.items,
 		SubtotalCents:    q.SubtotalCents,
 		DeliveryFeeCents: q.FeeCents,
 		SurgeMultiplier:  float64(q.MultiplierPct) / 100, // display only; the fee is integer cents
 		TotalCents:       q.TotalCents,
 		PaymentMethod:    req.PaymentMethod,
-		Stops:            stops,
+		Stops:            plan.stops,
 	}
 
-	eventItems := make([]events.JobLine, 0, len(items))
-	for _, it := range items {
-		eventItems = append(eventItems, events.JobLine{CatalogueItemID: it.CatalogueItemID, Name: it.Name, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents})
-	}
 	env, err := events.New(events.JobCreated, job.ID, events.JobCreatedData{
 		JobID: job.ID, CustomerID: job.CustomerID, CustomerName: job.CustomerName,
 		MerchantID: job.MerchantID, MerchantName: job.MerchantName,
-		Items: eventItems, SubtotalCents: job.SubtotalCents, DeliveryFeeCents: job.DeliveryFeeCents,
+		Items: job.EventLines(), SubtotalCents: job.SubtotalCents, DeliveryFeeCents: job.DeliveryFeeCents,
 		SurgeMultiplier: job.SurgeMultiplier, TotalCents: job.TotalCents, PaymentMethod: req.PaymentMethod,
 		Pack: job.Pack, State: job.Status, Stops: job.EventStops(),
 	})
@@ -209,7 +217,7 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		if err := outbox.Insert(ctx, tx, env); err != nil {
 			return err
 		}
-		return consumers.PublishSteps(ctx, tx, job, settled)
+		return consumers.PublishSteps(ctx, tx, job, a.Pack.Job.Requires, settled)
 	})
 	if err != nil {
 		a.Log.Error("create job", "error", err)
@@ -219,14 +227,69 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, job)
 }
 
+// planMerchantJob is food's template: pick up at the merchant, drop off at
+// the customer, lines priced from the merchant's catalogue.
+func (a *API) planMerchantJob(ctx context.Context, authorization string, req createJobRequest) (*jobPlan, *requestError) {
+	if req.MerchantID == "" {
+		return nil, badRequest("merchantId is required")
+	}
+	if !validPoint(req.Dropoff) {
+		return nil, badRequest("dropoff must be a real coordinate (lat -90..90, lng -180..180)")
+	}
+	rest, offered, err := a.Catalogue.Fetch(ctx, authorization, req.MerchantID)
+	if errors.Is(err, catalogue.ErrMerchantNotFound) {
+		return nil, badRequest("merchant not found")
+	}
+	if err != nil {
+		a.Log.Error("fetch catalogue", "merchantId", req.MerchantID, "error", err)
+		return nil, &requestError{status: http.StatusBadGateway, code: "upstream_unavailable", message: "could not load the merchant's catalogue, try again"}
+	}
+	lines := make([]domain.RequestedLine, 0, len(req.Items))
+	for _, it := range req.Items {
+		lines = append(lines, domain.RequestedLine{CatalogueItemID: it.CatalogueItemID, Quantity: it.Quantity})
+	}
+	items, subtotal, err := domain.PriceItems(lines, offered)
+	if err != nil {
+		return nil, badRequest(err.Error())
+	}
+	return &jobPlan{
+		merchantID: rest.ID, merchantName: rest.Name, items: items, subtotalCents: subtotal,
+		stops: []domain.Stop{
+			{Stop: events.Stop{Seq: 0, Kind: events.StopPickup, MerchantID: rest.ID,
+				Location: events.Location{Lat: rest.Lat, Lng: rest.Lng, Label: rest.Name}}},
+			{Stop: events.Stop{Seq: 1, Kind: events.StopDropoff, Location: req.Dropoff}},
+		},
+	}, nil
+}
+
+// planPointToPoint is courier's template: the customer names the pickup
+// and the dropoff and declares the packages. There is no merchant and no
+// subtotal: the price is the pack's fee alone.
+func (a *API) planPointToPoint(req createJobRequest) (*jobPlan, *requestError) {
+	if !validPoint(req.Pickup) || !validPoint(req.Dropoff) {
+		return nil, badRequest("pickup and dropoff must both be real coordinates (lat -90..90, lng -180..180)")
+	}
+	items, err := domain.PackageLines(req.Packages, a.Pack.Settings.Packages)
+	if err != nil {
+		return nil, badRequest(err.Error())
+	}
+	return &jobPlan{
+		items: items,
+		stops: []domain.Stop{
+			{Stop: events.Stop{Seq: 0, Kind: events.StopPickup, Location: req.Pickup}},
+			{Stop: events.Stop{Seq: 1, Kind: events.StopDropoff, Location: req.Dropoff}},
+		},
+	}, nil
+}
+
 // assumedFreeAgents stands in for the real count of free agents in the
 // surge load until dispatch publishes it.
 const assumedFreeAgents = 5
 
-// validDropoff rejects out-of-range coordinates and the 0,0 an omitted
-// dropoff decodes to (a point in the Atlantic that would send an agent
+// validPoint rejects out-of-range coordinates and the 0,0 an omitted
+// location decodes to (a point in the Atlantic that would send an agent
 // nowhere useful).
-func validDropoff(l events.Location) bool {
+func validPoint(l events.Location) bool {
 	if l.Lat == 0 && l.Lng == 0 {
 		return false
 	}
@@ -348,7 +411,7 @@ func (a *API) personMove(w http.ResponseWriter, r *http.Request, caller *auth.Cl
 		if err := store.Save(ctx, tx, job, steps); err != nil {
 			return err
 		}
-		return consumers.PublishSteps(ctx, tx, job, steps)
+		return consumers.PublishSteps(ctx, tx, job, a.Pack.Job.Requires, steps)
 	})
 	switch {
 	case errors.Is(err, store.ErrNotFound):

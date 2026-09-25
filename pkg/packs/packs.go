@@ -67,6 +67,9 @@ type JobShape struct {
 	Lines string `yaml:"lines"`
 	// Proof required per stop kind, e.g. {dropoff: photo}. Needs `proof`.
 	Proof map[string]string `yaml:"proof"`
+	// Requires lists the capabilities an agent needs for this pack's jobs
+	// (cold_chain, id_check, tail_lift). Needs `capacity`.
+	Requires []string `yaml:"requires"`
 }
 
 type Strategies struct {
@@ -171,6 +174,13 @@ func (p *Pack) validate(dir string, known lifecycle.Known) error {
 		}
 	default:
 		add("job.stops %q (valid: %s, %s, %s)", p.Job.Stops, StopsMerchantToCustomer, StopsPointToPoint, StopsMultiStop)
+	}
+	// A customer-given route has no merchant to price catalogue lines.
+	if p.Job.Stops != StopsMerchantToCustomer && p.Job.Lines != LinesPackages {
+		add("job.stops: %s needs lines: packages (catalogue lines come from a merchant stop)", p.Job.Stops)
+	}
+	if len(p.Job.Requires) > 0 && !p.Has(ModCapacity) {
+		add("job.requires is set but the capacity module isn't enabled")
 	}
 	switch p.Job.Lines {
 	case LinesCatalogue:

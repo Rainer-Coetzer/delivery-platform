@@ -64,10 +64,13 @@ func assignedTo(caller *auth.Claims, d *store.Assignment) bool {
 }
 
 type agentRequest struct {
-	Name    string  `json:"name"`
-	Vehicle string  `json:"vehicle"`
-	Lat     float64 `json:"lat"`
-	Lng     float64 `json:"lng"`
+	Name          string   `json:"name"`
+	Vehicle       string   `json:"vehicle"`
+	Lat           float64  `json:"lat"`
+	Lng           float64  `json:"lng"`
+	CapacityGrams int64    `json:"capacityGrams"`
+	CapacityCm3   int64    `json:"capacityCm3"`
+	Capabilities  []string `json:"capabilities"`
 }
 
 func (a *API) registerAgent(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +86,12 @@ func (a *API) registerAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Vehicle == "" {
 		req.Vehicle = "bike"
 	}
-	d := &store.Agent{ID: uuid.NewString(), Name: req.Name, Vehicle: req.Vehicle, Status: "OFFLINE", Lat: req.Lat, Lng: req.Lng}
+	if req.CapacityGrams < 0 || req.CapacityCm3 < 0 {
+		httpx.BadRequest(w, "capacityGrams and capacityCm3 can't be negative (leave them out if not known)")
+		return
+	}
+	d := &store.Agent{ID: uuid.NewString(), Name: req.Name, Vehicle: req.Vehicle, Status: "OFFLINE", Lat: req.Lat, Lng: req.Lng,
+		CapacityGrams: req.CapacityGrams, CapacityCm3: req.CapacityCm3, Capabilities: req.Capabilities}
 	if err := a.Store.RegisterAgent(r.Context(), d); err != nil {
 		a.Log.Error("register agent", "error", err)
 		httpx.Internal(w, "could not register agent")

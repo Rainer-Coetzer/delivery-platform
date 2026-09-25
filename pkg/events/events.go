@@ -100,11 +100,23 @@ type Stop struct {
 	MerchantID string   `json:"merchantId,omitempty"` // set when the stop is at a merchant
 }
 
+// JobLine is a catalogue item or, with the packages module, a package.
+// Kind is empty on events from before packages existed: read it as
+// "catalogue".
 type JobLine struct {
-	CatalogueItemID string `json:"catalogueItemId"`
+	Kind            string `json:"kind,omitempty"`
+	CatalogueItemID string `json:"catalogueItemId,omitempty"`
 	Name            string `json:"name"`
 	Quantity        int    `json:"quantity"`
 	UnitPriceCents  int64  `json:"unitPriceCents"`
+	WeightGrams     int64  `json:"weightGrams,omitempty"`
+	VolumeCm3       int64  `json:"volumeCm3,omitempty"` // per unit
+}
+
+// JobSize is what a job's packages add up to, for vehicle capacity.
+type JobSize struct {
+	WeightGrams int64 `json:"weightGrams"`
+	VolumeCm3   int64 `json:"volumeCm3"`
 }
 
 type JobCreatedData struct {
@@ -136,9 +148,12 @@ type JobStatusChangedData struct {
 	To          string `json:"to"`
 	ToMilestone string `json:"toMilestone,omitempty"`
 	Reason      string `json:"reason,omitempty"`
-	// Stops is set only on the step into ready_for_dispatch, so dispatch
-	// can route the job without keeping its own copy of every job.
-	Stops []Stop `json:"stops,omitempty"`
+	// Stops, Size and Requires are set only on the step into
+	// ready_for_dispatch, so dispatch can route the job, and match it to a
+	// vehicle, without keeping its own copy of every job.
+	Stops    []Stop   `json:"stops,omitempty"`
+	Size     *JobSize `json:"size,omitempty"`
+	Requires []string `json:"requires,omitempty"` // agent capabilities, from the pack
 }
 
 type JobCancelledData struct {

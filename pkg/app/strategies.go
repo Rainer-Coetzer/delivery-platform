@@ -44,6 +44,9 @@ func BuildStrategies(p *packs.Pack) (*Strategies, error) {
 	if out.Dispatch, err = dispatch.Build(s.Dispatch.Name, params("dispatch", s.Dispatch)); err != nil {
 		return nil, fmt.Errorf("pack %s: %w", p.Name, err)
 	}
+	if s.Dispatch.Name == "capacity_aware" && !p.Has(packs.ModCapacity) {
+		return nil, fmt.Errorf("pack %s: dispatch capacity_aware needs the capacity module", p.Name)
+	}
 	if out.ETA, err = eta.Build(s.ETA.Name, params("eta", s.ETA)); err != nil {
 		return nil, fmt.Errorf("pack %s: %w", p.Name, err)
 	}

@@ -64,7 +64,7 @@ func TestUpgradeFromPreRenameSchemas(t *testing.T) {
 			       INSERT INTO order_items (order_id, menu_item_id, name, quantity, unit_price_cents) VALUES ('j1', 'i1', 'Platter', 1, 100);
 			       INSERT INTO order_status_history (order_id, from_status, to_status) VALUES ('j1', 'CREATED', 'CONFIRMED');`,
 			// The second job line proves the renamed sequence still feeds the id default.
-			check: `INSERT INTO job_lines (job_id, catalogue_item_id, name, quantity, unit_price_cents) VALUES ('j1', 'i2', 'Chips', 1, 10);
+			check: `INSERT INTO job_lines (job_id, kind, catalogue_item_id, name, quantity, unit_price_cents) VALUES ('j1', 'catalogue', 'i2', 'Chips', 1, 10);
 			        SELECT merchant_id || '|' || agent_id || '|' || pack || '|' || milestone || '|' || (facts ->> 'paid') || (facts ->> 'merchant_accepted') || '|' ||
 			               (SELECT string_agg(catalogue_item_id, ',' ORDER BY id) FROM job_lines WHERE job_id = 'j1') || '|' ||
 			               (SELECT to_status FROM job_events WHERE job_id = 'j1') || '|' ||

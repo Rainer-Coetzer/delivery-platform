@@ -41,7 +41,7 @@ func newJob(t *testing.T, pool *db.Pool) string {
 	j := &domain.Job{
 		ID: uuid.NewString(), Pack: "food", CustomerID: "c1", CustomerName: "C", MerchantID: "m1", MerchantName: "Kapana",
 		Status: "CREATED", Milestone: lifecycle.Created, Facts: map[string]bool{}, PaymentMethod: "card",
-		Items: []domain.Item{{CatalogueItemID: "i1", Name: "Platter", Quantity: 2, UnitPriceCents: 6500}},
+		Items: []domain.Item{{Kind: domain.LineCatalogue, CatalogueItemID: "i1", Name: "Platter", Quantity: 2, UnitPriceCents: 6500}},
 		Stops: []domain.Stop{
 			{Stop: events.Stop{Seq: 0, Kind: events.StopPickup, MerchantID: "m1", Location: events.Location{Lat: -22.56, Lng: 17.07}}},
 			{Stop: events.Stop{Seq: 1, Kind: events.StopDropoff, Location: events.Location{Lat: -22.57, Lng: 17.08}}},
