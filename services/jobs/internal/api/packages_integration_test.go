@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -177,5 +178,54 @@ func TestMultiStopJob(t *testing.T) {
 	}
 	if code, body := post(`{"paymentMethod": "cash", ` + pkgs + `, "stops": [{"kind": "dropoff", "location": {"lat": -22.5, "lng": 17.0}}, {"kind": "dropoff", "location": {"lat": -22.6, "lng": 17.1}}]}`); code != 400 || !strings.Contains(body, "first stop must be a pickup") {
 		t.Fatalf("a route that starts with a drop: %d %s", code, body)
+	}
+}
+
+func TestBookedWindows(t *testing.T) {
+	pack := strings.NewReplacer(
+		"name: parcel", "name: booked",
+		"modules: [packages, capacity]", "modules: [packages, capacity, scheduling]",
+	).Replace(parcelPack) + "  scheduling: { max_days_ahead: 7, min_window_minutes: 30, lead_minutes: 20 }\n"
+	p, err := packs.Load(fstest.MapFS{
+		"booked/pack.yaml":      {Data: []byte(pack)},
+		"booked/lifecycle.yaml": {Data: []byte(parcelLifecycle)},
+	}, "booked", lifecycle.Known{Events: events.AllTopics, Roles: []string{"customer", "merchant", "agent", "admin"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	strategies, err := app.BuildStrategies(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := dbtest.New(t, migrations.FS)
+	a := &API{Pool: pool, Store: store.New(pool), Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: as(&auth.Claims{UserID: "c1", Role: auth.RoleCustomer}), Pack: p, Pricing: strategies.Pricing, Payments: strategies.Payments}
+	r := chi.NewRouter()
+	a.Routes(r)
+	post := func(body string) (int, string) {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest("POST", "/jobs", strings.NewReader(body)))
+		return rec.Code, rec.Body.String()
+	}
+	start := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Minute)
+	window := func(s, e time.Time) string {
+		return `"windows": {"0": {"start": "` + s.Format(time.RFC3339) + `", "end": "` + e.Format(time.RFC3339) + `"}}`
+	}
+	const base = `"paymentMethod": "cash", "pickup": {"lat": -22.57, "lng": 17.08}, "dropoff": {"lat": -22.52, "lng": 17.06},
+		"packages": [{"description": "Box", "quantity": 1, "weightGrams": 500, "lengthMm": 100, "widthMm": 100, "heightMm": 100}]`
+	code, body := post(`{` + base + `, ` + window(start, start.Add(time.Hour)) + `}`)
+	if code != 201 {
+		t.Fatalf("create: %d %s", code, body)
+	}
+	var j domain.Job
+	if err := json.Unmarshal([]byte(body), &j); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.New(pool).Get(context.Background(), j.ID)
+	if err != nil || stored.Stops[0].Window == nil || !stored.Stops[0].Window.Start.Equal(start) || stored.Stops[1].Window != nil {
+		t.Fatalf("the pickup window persists, the dropoff stays ASAP: %+v %v", stored.Stops, err)
+	}
+	if code, body := post(`{` + base + `, ` + window(start, start.Add(10*time.Minute)) + `}`); code != 400 || !strings.Contains(body, "at least 30 minutes") {
+		t.Fatalf("too narrow: %d %s", code, body)
 	}
 }

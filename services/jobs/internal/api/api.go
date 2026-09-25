@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -87,6 +88,10 @@ type createJobRequest struct {
 	// packages module: what is being moved.
 	Packages []domain.RequestedPackage `json:"packages"`
 
+	// scheduling module: booked windows by stop number (0 is the first
+	// stop). Stops without one are as soon as possible.
+	Windows map[int]events.TimeWindow `json:"windows"`
+
 	// Ignored, for compatibility: the customer is whoever the token says.
 	CustomerID   string `json:"customerId,omitempty"`
 	CustomerName string `json:"customerName,omitempty"`
@@ -151,6 +156,10 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if reqErr != nil {
 		httpx.WriteError(w, reqErr.status, reqErr.code, reqErr.message)
+		return
+	}
+	if err := domain.ApplyWindows(plan.stops, req.Windows, a.Pack.Settings.Scheduling, time.Now()); err != nil {
+		httpx.BadRequest(w, err.Error())
 		return
 	}
 

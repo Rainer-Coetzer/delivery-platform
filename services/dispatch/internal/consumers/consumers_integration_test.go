@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -387,5 +388,45 @@ func TestMultiStopRouteRunsInOrder(t *testing.T) {
 	var n int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE event_type = $1`, events.DispatchStopCompleted).Scan(&n); err != nil || n != 3 {
 		t.Fatalf("one stop-completed per stop: %d %v", n, err)
+	}
+}
+
+// A booked job waits in the queue until its pickup window opens (less the
+// lead time), then the retrier's query offers it like any other.
+func TestBookedJobIsHeldUntilItsWindow(t *testing.T) {
+	h, _, st := setup(t)
+	now := time.Now()
+	h.Dispatcher.Lead = 30 * time.Minute
+	h.Dispatcher.Now = func() time.Time { return now }
+	ctx := context.Background()
+	availableAgent(t, st)
+
+	booked := func(start time.Time) string {
+		t.Helper()
+		jobID := uuid.NewString()
+		env := envelope(t, events.JobStatusChanged, jobID, events.JobStatusChangedData{
+			JobID: jobID, To: "READY", ToMilestone: lifecycle.ReadyForDispatch,
+			Stops: []events.Stop{
+				{Seq: 0, Kind: events.StopPickup, Location: pickup, Window: &events.TimeWindow{Start: start, End: start.Add(time.Hour)}},
+				{Seq: 1, Kind: events.StopDropoff, Location: dropoff},
+			},
+		})
+		if err := h.Handle(ctx, env); err != nil {
+			t.Fatal(err)
+		}
+		return jobID
+	}
+
+	later := booked(now.Add(2 * time.Hour))
+	if _, err := st.GetByJob(ctx, later); err != store.ErrNotFound {
+		t.Fatalf("a job booked for later must not be assigned now: %v", err)
+	}
+	if p, err := st.ListPending(ctx); err != nil || len(p) != 0 {
+		t.Fatalf("it isn't due for the retrier yet either: %+v %v", p, err)
+	}
+
+	soon := booked(now.Add(10 * time.Minute)) // inside the 30 min lead
+	if _, err := st.GetByJob(ctx, soon); err != nil {
+		t.Fatalf("a window inside the lead time goes out now: %v", err)
 	}
 }

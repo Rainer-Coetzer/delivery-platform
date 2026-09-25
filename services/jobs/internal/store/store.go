@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
+	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/domain"
 )
@@ -57,9 +58,10 @@ func Create(ctx context.Context, tx pgx.Tx, j *domain.Job, initial string, settl
 	}
 	for _, s := range j.Stops {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO job_stops (job_id, seq, kind, lat, lng, label, merchant_id)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-			j.ID, s.Seq, s.Kind, s.Location.Lat, s.Location.Lng, nullStr(s.Location.Label), nullStr(s.MerchantID))
+			INSERT INTO job_stops (job_id, seq, kind, lat, lng, label, merchant_id, window_start, window_end)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			j.ID, s.Seq, s.Kind, s.Location.Lat, s.Location.Lng, nullStr(s.Location.Label), nullStr(s.MerchantID),
+			windowStart(s.Window), windowEnd(s.Window))
 		if err != nil {
 			return fmt.Errorf("insert job stop %d: %w", s.Seq, err)
 		}
@@ -202,7 +204,7 @@ func items(ctx context.Context, q queryer, jobID string) ([]domain.Item, error) 
 
 func stops(ctx context.Context, q queryer, jobID string) ([]domain.Stop, error) {
 	rows, err := q.Query(ctx, `
-		SELECT seq, kind, lat, lng, coalesce(label,''), coalesce(merchant_id,''), completed_at
+		SELECT seq, kind, lat, lng, coalesce(label,''), coalesce(merchant_id,''), completed_at, window_start, window_end
 		FROM job_stops WHERE job_id = $1 ORDER BY seq`, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("list job stops: %w", err)
@@ -211,8 +213,12 @@ func stops(ctx context.Context, q queryer, jobID string) ([]domain.Stop, error) 
 	out := []domain.Stop{}
 	for rows.Next() {
 		var s domain.Stop
-		if err := rows.Scan(&s.Seq, &s.Kind, &s.Location.Lat, &s.Location.Lng, &s.Location.Label, &s.MerchantID, &s.CompletedAt); err != nil {
+		var start, end *time.Time
+		if err := rows.Scan(&s.Seq, &s.Kind, &s.Location.Lat, &s.Location.Lng, &s.Location.Label, &s.MerchantID, &s.CompletedAt, &start, &end); err != nil {
 			return nil, fmt.Errorf("scan job stop: %w", err)
+		}
+		if start != nil && end != nil {
+			s.Window = &events.TimeWindow{Start: start.UTC(), End: end.UTC()}
 		}
 		out = append(out, s)
 	}
@@ -273,6 +279,20 @@ func factsJSON(f map[string]bool) ([]byte, error) {
 		return nil, fmt.Errorf("encode facts: %w", err)
 	}
 	return b, nil
+}
+
+func windowStart(w *events.TimeWindow) any {
+	if w == nil {
+		return nil
+	}
+	return w.Start
+}
+
+func windowEnd(w *events.TimeWindow) any {
+	if w == nil {
+		return nil
+	}
+	return w.End
 }
 
 func nullInt(v int64) any {

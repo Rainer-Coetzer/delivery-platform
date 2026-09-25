@@ -98,6 +98,15 @@ type Stop struct {
 	Kind       string   `json:"kind"`
 	Location   Location `json:"location"`
 	MerchantID string   `json:"merchantId,omitempty"` // set when the stop is at a merchant
+	// Window is a booked time (scheduling module); nil means as soon as
+	// possible.
+	Window *TimeWindow `json:"window,omitempty"`
+}
+
+// TimeWindow is a booked slot, as UTC instants.
+type TimeWindow struct {
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
 }
 
 // JobLine is a catalogue item or, with the packages module, a package.

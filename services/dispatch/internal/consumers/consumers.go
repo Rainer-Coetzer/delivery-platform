@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -101,6 +102,13 @@ func (h *Handlers) handleReady(ctx context.Context, env events.Envelope, route *
 		if err != nil || !isNew {
 			return err
 		}
+		// A booked job waits in the queue until its window (less the lead
+		// time); the retrier picks it up then.
+		if hold := h.Dispatcher.holdUntil(route); hold != nil && h.Dispatcher.now().Before(*hold) {
+			route.NotBefore = hold
+			h.Log.Info("booked job held until its window", "jobId", route.JobID, "notBefore", hold.Format(time.RFC3339))
+			return store.InsertPending(ctx, tx, route)
+		}
 		outcome, err := h.Dispatcher.TryAssign(ctx, tx, route)
 		if err != nil {
 			return err
@@ -171,6 +179,30 @@ type Dispatcher struct {
 	// Capacity is the pack's capacity module: only agents whose vehicle
 	// fits the job, and has what it requires, are candidates.
 	Capacity bool
+	// Lead is how long before a booked pickup window opens dispatch
+	// starts (the scheduling module's lead_minutes).
+	Lead time.Duration
+	// Now is the clock; tests set it.
+	Now func() time.Time
+}
+
+// holdUntil is when a booked job may first be assigned, or nil for ASAP:
+// its first pickup's window opening, less the lead time.
+func (d *Dispatcher) holdUntil(r *store.Route) *time.Time {
+	for _, s := range r.Stops {
+		if s.Seq == r.PickupSeq && s.Window != nil {
+			t := s.Window.Start.Add(-d.Lead)
+			return &t
+		}
+	}
+	return nil
+}
+
+func (d *Dispatcher) now() time.Time {
+	if d.Now != nil {
+		return d.Now()
+	}
+	return time.Now()
 }
 
 // maxCandidates bounds how many free agents a strategy chooses among: the

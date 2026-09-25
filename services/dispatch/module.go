@@ -4,6 +4,7 @@ package dispatch
 
 import (
 	"context"
+	"time"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/app"
 	"github.com/rainercoetzer/delivery-platform/pkg/config"
@@ -37,6 +38,9 @@ func newModule(d app.Deps) (*app.Module, error) {
 
 	st := store.New(d.Pool)
 	dispatcher := &consumers.Dispatcher{Strategy: d.Strategies.Dispatch, ETA: d.Strategies.ETA, Capacity: d.Pack.Has(packs.ModCapacity)}
+	if s := d.Pack.Settings.Scheduling; s != nil {
+		dispatcher.Lead = time.Duration(s.LeadMinutes) * time.Minute
+	}
 	h := &consumers.Handlers{Pool: d.Pool, Log: d.Log, Dispatcher: dispatcher}
 	retrier := &sim.PendingAssignmentRetrier{Pool: d.Pool, Store: st, Log: d.Log, Dispatcher: dispatcher}
 	// Location pings go straight to the bus, not the outbox: ephemeral

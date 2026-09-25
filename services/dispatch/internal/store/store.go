@@ -415,6 +415,9 @@ type Route struct {
 	// Stops is the whole route in order (multi-stop jobs have more than
 	// the pickup and dropoff above).
 	Stops []events.Stop
+	// Scheduling module: don't assign before this (the pickup window
+	// opening, less the lead time). Nil: as soon as an agent is free.
+	NotBefore *time.Time
 	// Capacity module: the job's size and the capabilities it needs.
 	WeightGrams int64
 	VolumeCm3   int64
@@ -424,10 +427,10 @@ type Route struct {
 func InsertPending(ctx context.Context, tx pgx.Tx, p *Route) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO pending_assignments (job_id, merchant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq,
-			weight_g, volume_cm3, requires, stops)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (job_id) DO NOTHING`,
+			weight_g, volume_cm3, requires, stops, not_before)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT (job_id) DO NOTHING`,
 		p.JobID, nullStr(p.MerchantID), p.PickupLat, p.PickupLng, p.DropoffLat, p.DropoffLng, p.PickupSeq, p.DropoffSeq,
-		p.WeightGrams, p.VolumeCm3, capabilities(p.Requires), stopsJSON(p.Stops))
+		p.WeightGrams, p.VolumeCm3, capabilities(p.Requires), stopsJSON(p.Stops), p.NotBefore)
 	if err != nil {
 		return fmt.Errorf("insert pending assignment: %w", err)
 	}
@@ -442,10 +445,12 @@ func DeletePending(ctx context.Context, tx pgx.Tx, jobID string) error {
 	return nil
 }
 
+// ListPending returns the queued jobs that may be assigned now: booked
+// ones wait until their not_before.
 func (s *Store) ListPending(ctx context.Context) ([]*Route, error) {
 	rows, err := s.pool.Query(ctx, `SELECT job_id, coalesce(merchant_id,''), pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq,
-		weight_g, volume_cm3, requires, stops
-		FROM pending_assignments ORDER BY created_at`)
+		weight_g, volume_cm3, requires, stops, not_before
+		FROM pending_assignments WHERE not_before IS NULL OR not_before <= now() ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list pending assignments: %w", err)
 	}
@@ -454,7 +459,7 @@ func (s *Store) ListPending(ctx context.Context) ([]*Route, error) {
 	for rows.Next() {
 		p := &Route{}
 		if err := rows.Scan(&p.JobID, &p.MerchantID, &p.PickupLat, &p.PickupLng, &p.DropoffLat, &p.DropoffLng, &p.PickupSeq, &p.DropoffSeq,
-			&p.WeightGrams, &p.VolumeCm3, &p.Requires, &p.Stops); err != nil {
+			&p.WeightGrams, &p.VolumeCm3, &p.Requires, &p.Stops, &p.NotBefore); err != nil {
 			return nil, fmt.Errorf("scan pending assignment: %w", err)
 		}
 		out = append(out, p)
