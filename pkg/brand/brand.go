@@ -13,11 +13,13 @@ package brand
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -371,6 +373,39 @@ func (b *Brand) LogoFile() (path, contentType string) {
 func (b *Brand) FormatMoney(minor int64) string {
 	return FormatMoney(minor, b.Currency)
 }
+
+// ParseMoney reads a typed amount ("65", "65.5", "65,50") as minor units
+// of c. It is the app's Currency.parse (lib/core/brand.dart), for imports:
+// text in, integers only, never a float, so 0.29 can't become 28. It
+// refuses a sign, more decimals than the currency has, or anything else.
+func ParseMoney(s string, c Currency) (int64, error) {
+	m := moneyText.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return 0, fmt.Errorf("%q is not an amount like 12.50", s)
+	}
+	whole, fraction := m[1], m[2]
+	if len(fraction) > c.MinorUnits {
+		return 0, fmt.Errorf("%q has more decimals than %s has (%d)", s, c.Code, c.MinorUnits)
+	}
+	w, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%q is too large", s)
+	}
+	scale := int64(1)
+	for i := 0; i < c.MinorUnits; i++ {
+		scale *= 10
+	}
+	var f int64
+	if fraction != "" {
+		f, _ = strconv.ParseInt(fraction+strings.Repeat("0", c.MinorUnits-len(fraction)), 10, 64)
+	}
+	if w > (math.MaxInt64-f)/scale {
+		return 0, fmt.Errorf("%q is too large", s)
+	}
+	return w*scale + f, nil
+}
+
+var moneyText = regexp.MustCompile(`^(\d+)(?:[.,](\d*))?$`)
 
 func FormatMoney(minor int64, c Currency) string {
 	neg := minor < 0

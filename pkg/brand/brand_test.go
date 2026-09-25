@@ -231,3 +231,25 @@ func TestContrast(t *testing.T) {
 		t.Fatal(p)
 	}
 }
+
+// The same cases as the app's Currency.parse (apps/delivery_app/test/brand_test.dart).
+func TestParseMoney(t *testing.T) {
+	nad := Currency{Code: "NAD", Symbol: "N$", MinorUnits: 2}
+	for in, want := range map[string]int64{"65": 6500, " 65.5 ": 6550, "65,50": 6550, "0.29": 29, "65.": 6500} {
+		if got, err := ParseMoney(in, nad); err != nil || got != want {
+			t.Errorf("%q: %d %v, want %d", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "abc", "-5", "65.505", "6 5", "1e3", ".5", "99999999999999999999"} {
+		if got, err := ParseMoney(bad, nad); err == nil {
+			t.Errorf("%q: %d, want an error", bad, got)
+		}
+	}
+	jpy := Currency{Code: "JPY", Symbol: "¥", MinorUnits: 0}
+	if got, err := ParseMoney("1500", jpy); err != nil || got != 1500 {
+		t.Errorf("JPY: %d %v", got, err)
+	}
+	if _, err := ParseMoney("1500.5", jpy); err == nil || !strings.Contains(err.Error(), "more decimals than JPY") {
+		t.Errorf("JPY decimals: %v", err)
+	}
+}
