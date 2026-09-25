@@ -20,6 +20,25 @@ A distributed food delivery platform built with **Go** microservices, **Kafka**,
 The domain is generic (job, merchant, agent, assignment; ADR-0003). The
 `food` pack names them order, restaurant, driver and delivery on screen.
 
+## Packs
+
+A pack (`packs/<name>/`) turns the generic core into one business: which
+capability modules are on, how a job is shaped and priced, who dispatches
+it, its lifecycle, its words, and its limits. `PACK` picks one (default
+`food`); every service in an install runs the same pack.
+
+| Pack | Jobs | Modules | Pricing, dispatch |
+|---|---|---|---|
+| `food` | order from a restaurant's menu, kitchen prep, delivery | catalogue | surge tiers, nearest driver |
+| `courier` | parcels between any two addresses, photo at pickup, signature at the door, bookable pickup windows | packages, capacity, proof, scheduling | per km, smallest vehicle that fits |
+| `freight` | truck loads with several drops, dispatcher approval, waybill and documents, signed drops | packages, multi-stop, capacity, documents, approval, proof | per km (with a minimum), smallest truck that fits |
+
+Each pack has demo data and an end-to-end scenario in `packs/<name>/seed.yaml`:
+
+```bash
+PACK=courier ./scripts/e2e.sh
+```
+
 ## Running it
 
 Prerequisites: Docker and Go 1.26+ (the seed and e2e tools are small Go

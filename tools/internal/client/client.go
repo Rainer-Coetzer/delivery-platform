@@ -63,3 +63,25 @@ func Do(method, url, token string, body, out any) error {
 	}
 	return nil
 }
+
+// Upload POSTs body as-is with contentType (a file, not JSON).
+func Upload(url, token, contentType string, body io.Reader) error {
+	req, err := http.NewRequest(http.MethodPost, url, body)
+	if err != nil {
+		return fmt.Errorf("build POST %s: %w", url, err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return &StatusError{Method: http.MethodPost, URL: url, Status: resp.StatusCode, Body: string(bytes.TrimSpace(raw))}
+	}
+	return nil
+}
