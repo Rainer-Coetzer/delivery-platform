@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/app"
@@ -29,6 +30,16 @@ func TestSelectModules(t *testing.T) {
 			if got[i].Name != c.want[i] {
 				t.Fatalf("%q: got %s at %d, want %s", c.list, got[i].Name, i, c.want[i])
 			}
+		}
+	}
+}
+
+// An extension named like a shipped module would share its schema.
+func TestSelectModulesRefusesDuplicateNames(t *testing.T) {
+	all := []app.Definition{{Name: "jobs"}, {Name: "returns"}, {Name: "jobs"}}
+	for _, list := range []string{"", "returns"} {
+		if _, err := selectModules(list, all); err == nil || !strings.Contains(err.Error(), `two modules are named "jobs"`) {
+			t.Fatalf("%q: %v", list, err)
 		}
 	}
 }

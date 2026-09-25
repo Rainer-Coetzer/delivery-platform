@@ -13,6 +13,9 @@ COPY pkg ./pkg
 COPY services ./services
 COPY cmd ./cmd
 COPY packs ./packs
+# The buyer's own modules (platformctl new-module); the folder always
+# exists, so this COPY never fails on a fresh checkout.
+COPY ext ./ext
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/app ${CMD}

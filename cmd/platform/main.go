@@ -8,6 +8,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -32,7 +33,9 @@ var all = []app.Definition{
 }
 
 func main() {
-	defs, err := selectModules(os.Getenv("PLATFORM_MODULES"), all)
+	// Yours after ours (extensions.go). The full slice expression makes
+	// append copy, so `all` itself is never changed.
+	defs, err := selectModules(os.Getenv("PLATFORM_MODULES"), append(all[:len(all):len(all)], extensions...))
 	if err != nil {
 		slog.Error("startup failed", "error", err)
 		os.Exit(1)
@@ -44,14 +47,19 @@ func main() {
 // all of them for an empty list. An unknown name is an error, not a skip: a
 // typo mustn't quietly boot a platform without its payments module.
 func selectModules(list string, all []app.Definition) ([]app.Definition, error) {
-	if strings.TrimSpace(list) == "" {
-		return all, nil
-	}
 	byName := map[string]app.Definition{}
 	names := make([]string, 0, len(all))
 	for _, d := range all {
+		// A module's name is its schema: two with one name would share
+		// tables (an extension named like a shipped module, say).
+		if _, dup := byName[d.Name]; dup {
+			return nil, fmt.Errorf("two modules are named %q (cmd/platform/extensions.go?): a module's name is its database schema, so it must be unique", d.Name)
+		}
 		byName[d.Name] = d
 		names = append(names, d.Name)
+	}
+	if strings.TrimSpace(list) == "" {
+		return all, nil
 	}
 	var out []app.Definition
 	for _, n := range strings.Split(list, ",") {
