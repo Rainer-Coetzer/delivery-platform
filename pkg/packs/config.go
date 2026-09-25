@@ -75,10 +75,11 @@ type ProofLimits struct {
 	MaxPhotoBytes int64 `json:"maxPhotoBytes"`
 }
 
-// Config builds the public configuration in locale (falling back to English
-// for any word the pack doesn't translate).
+// Config builds the public configuration for locale, which the caller has
+// already chosen (the gateway: one the brand supports). Any word the pack
+// doesn't have in that locale falls back to English.
 func (p *Pack) Config(locale string, paymentMethods []string) PublicConfig {
-	if _, ok := p.Terminology[locale]; !ok {
+	if locale == "" {
 		locale = "en"
 	}
 	terms := map[string]string{}

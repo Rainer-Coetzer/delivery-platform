@@ -121,6 +121,13 @@ func TestPointToPointWithPackages(t *testing.T) {
 		t.Fatalf("package lines persist: %+v %v", stored.Items, err)
 	}
 
+	// Outside the brand's service area.
+	a.InArea = func(lat, lng float64) bool { return lat > -22.55 } // the pickup (-22.57) is out
+	if code, body := post(`{` + route + `, "packages": [{"description": "x", "quantity": 1, "weightGrams": 1, "lengthMm": 1, "widthMm": 1, "heightMm": 1}]}`); code != 400 || !strings.Contains(body, "outside the area") {
+		t.Fatalf("outside the service area: %d %s", code, body)
+	}
+	a.InArea = nil
+
 	for _, bad := range []string{
 		`{` + route + `, "packages": []}`,
 		`{` + route + `, "packages": [{"description": "Piano", "quantity": 1, "weightGrams": 300000, "lengthMm": 1500, "widthMm": 600, "heightMm": 1300}]}`,

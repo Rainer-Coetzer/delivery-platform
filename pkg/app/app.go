@@ -32,6 +32,7 @@ import (
 	packfs "github.com/rainercoetzer/delivery-platform/packs"
 	"github.com/rainercoetzer/delivery-platform/pkg/auth"
 	"github.com/rainercoetzer/delivery-platform/pkg/blob"
+	"github.com/rainercoetzer/delivery-platform/pkg/brand"
 	"github.com/rainercoetzer/delivery-platform/pkg/config"
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
@@ -103,6 +104,8 @@ type Deps struct {
 	// Blobs stores uploaded files (proof, documents); nil when the pack
 	// has neither module.
 	Blobs blob.Store
+	// Brand is the buyer's brand profile (config/brand.yaml), validated.
+	Brand *brand.Brand
 }
 
 // Options for Run.
@@ -145,6 +148,10 @@ func run(log *slog.Logger, opts Options) error {
 		return err
 	}
 	issuer := auth.NewIssuer(secret, 24*time.Hour)
+	br, err := brand.Load(BrandFile(), config.IsDev())
+	if err != nil {
+		return err
+	}
 	pack, err := LoadPack()
 	if err != nil {
 		return err
@@ -153,7 +160,18 @@ func run(log *slog.Logger, opts Options) error {
 	if err != nil {
 		return err
 	}
-	log.Info("pack loaded", "pack", pack.Name, "modules", pack.Modules, "payment", strategies.Payments.Methods())
+	if err := br.Apply(pack, strategies.Payments.Methods()); err != nil {
+		return err
+	}
+	// The brand may offer fewer payment methods than the pack takes.
+	if strategies.Payments, err = strategies.Payments.Only(br.EnabledPaymentMethods(pack, strategies.Payments.Methods())); err != nil {
+		return err
+	}
+	if pack.Name != br.Pack {
+		log.Warn("PACK overrides the brand's pack; the brand's pack overrides don't apply", "pack", pack.Name, "brandPack", br.Pack)
+	}
+	log.Info("brand and pack loaded", "brand", br.Name, "pack", pack.Name, "modules", pack.Modules, "payment", strategies.Payments.Methods(),
+		"currency", br.Currency.Code, "tenant", br.TenantID)
 	blobs, err := openBlobs(pack)
 	if err != nil {
 		return err
@@ -215,7 +233,7 @@ func run(log *slog.Logger, opts Options) error {
 	defer cancelRun()
 
 	for _, def := range opts.Definitions {
-		deps := Deps{Log: log.With("module", def.Name), Bus: b, Issuer: issuer, Auth: issuer.Middleware, HTTP: httpClient, URL: urlFor, Embedded: opts.Embedded, Pack: pack, Strategies: strategies, Blobs: blobs}
+		deps := Deps{Log: log.With("module", def.Name), Bus: b, Issuer: issuer, Auth: issuer.Middleware, HTTP: httpClient, URL: urlFor, Embedded: opts.Embedded, Pack: pack, Strategies: strategies, Blobs: blobs, Brand: br}
 		if def.Migrations != nil {
 			pool, err := openModuleDB(ctx, dsn, def, opts.Embedded)
 			if err != nil {
@@ -298,11 +316,15 @@ func openBlobs(p *packs.Pack) (blob.Store, error) {
 	return blob.NewLocal(dir)
 }
 
-// LoadPack loads the pack named by PACK (default food): from PACKS_DIR
-// when set, otherwise from the packs embedded in the binary. In the `full`
-// profile every service must be given the same PACK; they each load it.
+// LoadPack loads the pack this platform runs: PACK when set (tests, the
+// e2e, a demo of another pack), otherwise the brand file's pack. From
+// PACKS_DIR when set, otherwise from the packs embedded in the binary. In
+// the `full` profile every service loads it, from the same brand file.
 func LoadPack() (*packs.Pack, error) {
-	name := config.String("PACK", "food")
+	name, err := packName()
+	if err != nil {
+		return nil, err
+	}
 	var fsys fs.FS = packfs.FS
 	if dir := os.Getenv("PACKS_DIR"); dir != "" {
 		fsys = os.DirFS(dir)
@@ -313,6 +335,24 @@ func LoadPack() (*packs.Pack, error) {
 		return nil, fmt.Errorf("PACK=%s: %w", name, err)
 	}
 	return p, nil
+}
+
+// BrandFile is where the brand profile lives: BRAND_FILE, or
+// config/brand.yaml from the working directory (the repo root, for go run
+// and the tools; the image sets BRAND_FILE).
+func BrandFile() string { return config.String("BRAND_FILE", filepath.Join("config", "brand.yaml")) }
+
+// packName is PACK, or the brand file's pack. It reads that one field only:
+// the tools need the pack's name, not a fully validated brand.
+func packName() (string, error) {
+	if name := os.Getenv("PACK"); name != "" {
+		return name, nil
+	}
+	name, err := brand.PackName(BrandFile())
+	if err != nil {
+		return "", fmt.Errorf("which pack? set PACK or fix the brand file: %w", err)
+	}
+	return name, nil
 }
 
 func newBus(ctx context.Context, kind, dsn string, log *slog.Logger) (bus.Bus, error) {

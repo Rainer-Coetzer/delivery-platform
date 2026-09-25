@@ -7,6 +7,7 @@ package gateway
 import (
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/go-chi/httprate"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/app"
+	"github.com/rainercoetzer/delivery-platform/pkg/brand"
 	"github.com/rainercoetzer/delivery-platform/pkg/config"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
@@ -47,7 +49,8 @@ func newModule(d app.Deps) (*app.Module, error) {
 		r.Get("/ws", hub.ServeHTTP)
 		// What the app needs to draw this platform: the pack's words,
 		// lifecycle and limits. Public (read before login); nothing secret.
-		r.Get("/config", configHandler(d.Pack, d.Strategies.Payments.Methods()))
+		r.Get("/config", configHandler(d.Brand, d.Pack, d.Strategies.Payments.Methods()))
+		r.Get("/brand/logo", logoHandler(d.Brand))
 		if d.Embedded {
 			return // the other modules are mounted on this same router
 		}
@@ -138,9 +141,24 @@ func must(err error) {
 	}
 }
 
-// configHandler serves the pack's public configuration in the caller's
-// locale: ?locale=af, else the first Accept-Language tag, else English.
-func configHandler(p *packs.Pack, paymentMethods []string) http.HandlerFunc {
+// publicConfig is GET /config: the brand (who the platform is, how it
+// looks, where it works) beside the pack's configuration (what it does
+// and in which words).
+type publicConfig struct {
+	Brand brandInfo `json:"brand"`
+	packs.PublicConfig
+}
+
+type brandInfo struct {
+	*brand.Brand
+	LogoURL string `json:"logoUrl,omitempty"`
+}
+
+// configHandler serves the public configuration in the caller's locale:
+// ?locale=af, else the first Accept-Language tag, else the brand's
+// default. Roles and payment methods are what the brand enables, which
+// may be fewer than the pack has.
+func configHandler(b *brand.Brand, p *packs.Pack, paymentMethods []string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		locale := r.URL.Query().Get("locale")
 		if locale == "" {
@@ -148,9 +166,35 @@ func configHandler(p *packs.Pack, paymentMethods []string) http.HandlerFunc {
 			locale, _, _ = strings.Cut(strings.TrimSpace(first), "-")
 			locale, _, _ = strings.Cut(locale, ";")
 		}
-		// It changes only when the pack does (a redeploy): let clients and
-		// proxies cache it briefly.
+		locale = strings.ToLower(locale)
+		if !slices.Contains(b.Locales.Supported, locale) {
+			locale = b.Locales.Default
+		}
+		cfg := publicConfig{Brand: brandInfo{Brand: b}, PublicConfig: p.Config(locale, paymentMethods)}
+		cfg.Roles = b.EnabledRoles(p)
+		if path, _ := b.LogoFile(); path != "" {
+			cfg.Brand.LogoURL = "/brand/logo"
+		}
+		// It changes only when the brand or pack does (a redeploy): let
+		// clients and proxies cache it briefly.
 		w.Header().Set("Cache-Control", "public, max-age=300")
-		httpx.WriteJSON(w, http.StatusOK, p.Config(strings.ToLower(locale), paymentMethods))
+		httpx.WriteJSON(w, http.StatusOK, cfg)
+	}
+}
+
+// logoHandler serves the brand's logo. An SVG can carry script, so it goes
+// out with a policy that forbids any: opened on its own, it's a picture.
+func logoHandler(b *brand.Brand) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		path, contentType := b.LogoFile()
+		if path == "" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		http.ServeFile(w, r, path)
 	}
 }

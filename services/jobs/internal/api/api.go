@@ -4,6 +4,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -45,6 +46,9 @@ type API struct {
 	Pricing   pricing.Policy
 	Payments  *payment.Set
 	Blobs     blob.Store // documents module
+	// InArea reports whether a point is in the brand's service area; nil
+	// means everywhere (tests).
+	InArea func(lat, lng float64) bool
 	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
 	Auth func(http.Handler) http.Handler
 }
@@ -162,6 +166,14 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 	if reqErr != nil {
 		httpx.WriteError(w, reqErr.status, reqErr.code, reqErr.message)
 		return
+	}
+	if a.InArea != nil {
+		for _, s := range plan.stops {
+			if !a.InArea(s.Location.Lat, s.Location.Lng) {
+				httpx.BadRequest(w, fmt.Sprintf("stop %d is outside the area we serve", s.Seq))
+				return
+			}
+		}
 	}
 	if err := domain.ApplyWindows(plan.stops, req.Windows, a.Pack.Settings.Scheduling, time.Now()); err != nil {
 		httpx.BadRequest(w, err.Error())

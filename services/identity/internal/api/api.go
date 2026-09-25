@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -22,6 +23,13 @@ type API struct {
 	Log   *slog.Logger
 	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
 	Auth func(http.Handler) http.Handler
+	// Roles are the account kinds this platform has (the brand's roles);
+	// nil means all four.
+	Roles []string
+}
+
+func (a *API) offers(role auth.Role) bool {
+	return a.Roles == nil || slices.Contains(a.Roles, string(role))
 }
 
 // Routes: registration and verify are public, everything else needs a
@@ -85,6 +93,10 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, "refId can't be set on registration")
 		return
 	}
+	if !a.offers(auth.RoleCustomer) {
+		httpx.Forbidden(w, "this platform has no customer sign-up")
+		return
+	}
 	a.create(w, r, req.Name, req.Email, req.Password, auth.RoleCustomer, "")
 }
 
@@ -108,6 +120,10 @@ func (a *API) createUser(w http.ResponseWriter, r *http.Request) {
 	role := auth.Role(req.Role)
 	if !auth.ValidRole(role) {
 		httpx.BadRequest(w, "role must be customer, merchant, agent or admin")
+		return
+	}
+	if !a.offers(role) {
+		httpx.BadRequest(w, "this platform has no "+string(role)+" accounts (brand roles)")
 		return
 	}
 	needsRef := role == auth.RoleMerchant || role == auth.RoleAgent

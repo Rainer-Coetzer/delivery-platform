@@ -27,8 +27,9 @@ func TestConfig(t *testing.T) {
 	if c.Limits.Packages != nil || c.Limits.Proof != nil {
 		t.Fatalf("food has no packages or proof limits: %+v", c.Limits)
 	}
-	if got := food.Config("xx", nil).Locale; got != "en" {
-		t.Fatalf("an unknown locale falls back to en, got %s", got)
+	// A locale the pack doesn't translate still gets every word, in English.
+	if af := food.Config("af", nil); af.Locale != "af" || af.Terms["merchant"] != "restaurant" {
+		t.Fatalf("untranslated words fall back to English: %s %v", af.Locale, af.Terms["merchant"])
 	}
 
 	freight, err := Load(packfs.FS, "freight", known)

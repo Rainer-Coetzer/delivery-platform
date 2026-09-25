@@ -32,7 +32,7 @@ func newModule(d app.Deps) (*app.Module, error) {
 	if err := bootstrapAdmin(context.Background(), st, d.Log); err != nil {
 		return nil, fmt.Errorf("bootstrap admin: %w", err)
 	}
-	a := &api.API{Store: st, Log: d.Log, Auth: d.Auth}
+	a := &api.API{Store: st, Log: d.Log, Auth: d.Auth, Roles: d.Brand.EnabledRoles(d.Pack)}
 	h := &consumers.Handlers{Pool: d.Pool, Log: d.Log}
 	return &app.Module{
 		Routes: a.Routes,

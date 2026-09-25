@@ -3,6 +3,7 @@ package packs
 import (
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // Settings are the numbers a pack's capability modules run on: limits,
@@ -126,6 +127,18 @@ func (p *Pack) validateFacts() error {
 		return fmt.Errorf("lifecycle.yaml has facts set by a role, which needs the approval module")
 	case !roleSet && p.Has(ModApproval):
 		return fmt.Errorf("the approval module is enabled but lifecycle.yaml has no fact set by a role (`by:`)")
+	}
+	return nil
+}
+
+// Revalidate checks the pack's module settings again, after a brand
+// overrode some of them (pkg/brand): an override must meet the same rules
+// as the pack's own numbers.
+func (p *Pack) Revalidate() error {
+	var problems []string
+	p.validateSettings(func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) })
+	if len(problems) > 0 {
+		return fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	return nil
 }

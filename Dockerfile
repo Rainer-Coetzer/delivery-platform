@@ -23,6 +23,10 @@ RUN addgroup -S app && adduser -S app -G app
 # because a named volume mounted on it starts as a copy of this directory:
 # without it the volume is root's and the first upload fails.
 RUN mkdir -p /data/blobs && chown -R app:app /data
+# The brand profile it boots with; compose mounts ./config over it, so a
+# rebrand needs a restart, not a rebuild.
+COPY config /config
+ENV BRAND_FILE=/config/brand.yaml
 COPY --from=build /out/app /app
 USER app
 ENTRYPOINT ["/app"]

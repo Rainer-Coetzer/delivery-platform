@@ -25,6 +25,8 @@ type API struct {
 	Log   *slog.Logger
 	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
 	Auth func(http.Handler) http.Handler
+	// DefaultTimezone is the brand's, for merchants created without one.
+	DefaultTimezone string
 }
 
 // Routes: browsing is open to any signed-in user; creating merchants is
@@ -80,8 +82,11 @@ func (a *API) createMerchant(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, "name, opensAt and closesAt (HH:MM) are required")
 		return
 	}
-	// Required, not defaulted: guessing a zone is how hours ended up being
-	// judged in UTC (audit P0-9).
+	// Never guessed (guessing is how hours ended up judged in UTC, audit
+	// P0-9): the merchant's own, or the one the brand is configured with.
+	if req.Timezone == "" {
+		req.Timezone = a.DefaultTimezone
+	}
 	if _, err := time.LoadLocation(req.Timezone); req.Timezone == "" || err != nil {
 		httpx.BadRequest(w, "timezone must be an IANA zone such as Africa/Windhoek")
 		return

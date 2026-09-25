@@ -40,7 +40,7 @@ func newModule(d app.Deps) (*app.Module, error) {
 	st := store.New(d.Pool)
 	h := &consumers.Handlers{Pool: d.Pool, Log: d.Log}
 	m := &app.Module{
-		Routes:    (&api.API{Pool: d.Pool, Store: st, Log: d.Log, Auth: d.Auth}).Routes,
+		Routes:    (&api.API{Pool: d.Pool, Store: st, Log: d.Log, Auth: d.Auth, DefaultTimezone: d.Brand.Timezone}).Routes,
 		Outbox:    true,
 		Consumers: []app.Consumer{{Group: "merchant-service", Topics: consumers.Topics, Handler: h.Handle}},
 	}

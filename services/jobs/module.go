@@ -23,6 +23,7 @@ func newModule(d app.Deps) (*app.Module, error) {
 	a := &api.API{
 		Pool: d.Pool, Store: store.New(d.Pool), Log: d.Log, Auth: d.Auth, Pack: d.Pack,
 		Pricing: d.Strategies.Pricing, Payments: d.Strategies.Payments, Blobs: d.Blobs,
+		InArea:    d.Brand.InServiceArea,
 		Catalogue: catalogue.New(d.URL("merchant"), d.HTTP),
 	}
 	return &app.Module{

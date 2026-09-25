@@ -23,10 +23,11 @@ type Handlers struct {
 	Log      *slog.Logger
 	Channels []notify.Channel
 	Words    Words // the pack
+	Money    Money // the brand's currency
 }
 
 func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
-	n, err := build(env, h.Words)
+	n, err := build(env, h.Words, h.Money)
 	if err != nil {
 		return err
 	}
@@ -65,12 +66,15 @@ type Words interface {
 	StateLabel(locale, state string) string
 }
 
+// Money writes minor units in the platform's currency (the brand's).
+type Money func(minor int64) string
+
 const locale = "en"
 
 // build maps an event to the notification it produces, or nil if this
 // service does not notify on that topic (e.g. the high-frequency
 // dispatch.location stream).
-func build(env events.Envelope, w Words) (*store.Notification, error) {
+func build(env events.Envelope, w Words, money Money) (*store.Notification, error) {
 	job, Job := w.Noun(locale, "job", false), w.Noun(locale, "job", true)
 	switch env.EventType {
 	case events.JobCreated:
@@ -81,11 +85,9 @@ func build(env events.Envelope, w Words) (*store.Notification, error) {
 		if d.MerchantID == "" {
 			return nil, nil // a courier job has no merchant to tell
 		}
-		// Known debt: the currency is hardcoded until the platform profile
-		// (Phase D) gives one.
 		return &store.Notification{
 			Recipient: "merchant:" + d.MerchantID, JobID: d.JobID, Channel: "in-app",
-			Title: "New " + job, Body: fmt.Sprintf("%s %s from %s, total N$%.2f", Job, short(d.JobID), d.CustomerName, cents(d.TotalCents)),
+			Title: "New " + job, Body: fmt.Sprintf("%s %s from %s, total %s", Job, short(d.JobID), d.CustomerName, money(d.TotalCents)),
 		}, nil
 	case events.JobStatusChanged:
 		d, err := events.Decode[events.JobStatusChangedData](env)
@@ -144,5 +146,3 @@ func short(id string) string {
 	}
 	return id
 }
-
-func cents(c int64) float64 { return float64(c) / 100 }

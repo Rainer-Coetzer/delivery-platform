@@ -72,6 +72,24 @@ func NewSet(providers map[string]Provider) (*Set, error) {
 	return s, nil
 }
 
+// Only is the set restricted to methods (the brand's choice). A method the
+// set doesn't take is an error: the brand is asking for something the pack
+// can't do.
+func (s *Set) Only(methods []string) (*Set, error) {
+	out := &Set{byMethod: map[string]Provider{}}
+	for _, m := range methods {
+		p, ok := s.byMethod[m]
+		if !ok {
+			return nil, fmt.Errorf("payment method %q isn't one the pack takes (%v)", m, s.Methods())
+		}
+		out.byMethod[m] = p
+	}
+	if len(out.byMethod) == 0 {
+		return nil, fmt.Errorf("no payment methods left: a platform needs at least one")
+	}
+	return out, nil
+}
+
 // For returns the provider for method.
 func (s *Set) For(method string) (Provider, bool) {
 	p, ok := s.byMethod[method]

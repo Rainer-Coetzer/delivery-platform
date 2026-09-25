@@ -68,3 +68,30 @@ func TestSecurityBoundaries(t *testing.T) {
 		})
 	}
 }
+
+// A platform only has the account kinds its brand enables: a courier brand
+// with no merchants can't be given merchant logins, and a B2B brand that
+// lists no customers has no public sign-up.
+func TestBrandRoles(t *testing.T) {
+	admin := &auth.Claims{UserID: "x", Role: auth.RoleAdmin}
+	for _, c := range []struct {
+		name, method, path, body string
+		claims                   *auth.Claims
+		roles                    []string
+		want                     int
+	}{
+		{"merchant login on a brand without merchants", "POST", "/users", `{"name":"a","email":"a@b.c","password":"password123","role":"merchant","refId":"m1"}`, admin, []string{"customer", "agent", "admin"}, 400},
+		{"sign-up on a brand without customers", "POST", "/auth/register", `{"name":"a","email":"a@b.c","password":"password123"}`, nil, []string{"merchant", "agent", "admin"}, 403},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := &API{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: as(c.claims), Roles: c.roles}
+			r := chi.NewRouter()
+			a.Routes(r)
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(c.method, c.path, strings.NewReader(c.body)))
+			if rec.Code != c.want {
+				t.Fatalf("%d, want %d (%s)", rec.Code, c.want, rec.Body.String())
+			}
+		})
+	}
+}

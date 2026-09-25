@@ -1,0 +1,68 @@
+# Brand profile: who this platform is, where it works and what it offers.
+# This is your file: a rebrand is an edit here, no code. The server checks it
+# at boot and refuses to start, with the reason, if something is off.
+# Every field is described in docs/CONFIGURATION.md.
+schema: 1
+
+name: Windhoek Eats
+tagline: Anything in Windhoek, brought to you.
+logo: logo.svg                  # next to this file: .png, .jpg, .webp or .svg
+
+# Brand colours as #RRGGBB. The app builds its whole palette from these.
+colours:
+  primary: "#E4572E"
+  secondary: "#17A398"
+  background: "#FFFBF7"
+  text: "#1D1D1F"
+font: ""                        # a font family the app bundles; empty uses the platform default
+
+# Money is stored in minor units (cents); this is only how it's shown.
+currency:
+  code: NAD
+  symbol: "N$"
+  minor_units: 2
+
+locales:
+  default: en
+  supported: [en, af]           # the app ships English and Afrikaans
+timezone: Africa/Windhoek       # new merchants default to this; hours are read in it
+
+map:
+  centre: { lat: -22.5700, lng: 17.0836 }
+  zoom: 13
+  # The tile provider (docs/MAPS.md lists the options). OpenStreetMap's own
+  # servers are fine for local development only: their usage policy doesn't
+  # allow app traffic, and outside PROFILE=dev the server refuses them.
+  # A keyed provider looks like:
+  #   url: "https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key={key}"
+  #   key_env: MAP_TILES_KEY
+  tiles:
+    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    attribution: "© OpenStreetMap contributors"
+    max_zoom: 19
+
+# Where you work. A job with a stop outside every area is refused.
+# Leave the list out to work anywhere.
+service_area:
+  - { name: Windhoek, lat: -22.5700, lng: 17.0836, radius_km: 30 }
+
+# The pack this platform runs (packs/<name>). PACK in the environment
+# overrides it, for tests and demos.
+pack: food
+
+# Which of the pack's roles and payment methods you offer. Leave a list out
+# to offer everything the pack has.
+roles: [customer, merchant, agent, admin]
+payment_methods: [card, cash]
+
+# Stamped on every account, merchant and job. One platform, one tenant: see
+# docs/MULTI_TENANCY.md before changing it.
+tenant_id: default
+
+# Pack defaults you want different without forking the pack: its words, and
+# its module settings (a module's block replaces the pack's whole).
+overrides:
+  terminology:
+    en:
+      merchant: restaurant
+      merchants: restaurants
