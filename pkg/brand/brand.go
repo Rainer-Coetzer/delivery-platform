@@ -27,6 +27,11 @@ import (
 
 	"github.com/rainercoetzer/delivery-platform/pkg/geo"
 	"github.com/rainercoetzer/delivery-platform/pkg/packs"
+
+	// Every service checks the brand's timezone at boot, and the service
+	// images carry no zoneinfo: without the embedded database (~450 KB),
+	// LoadLocation fails and so does the boot (the full profile did).
+	_ "time/tzdata"
 )
 
 // SchemaVersion is the brand.yaml format this code reads.
