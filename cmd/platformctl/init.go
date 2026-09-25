@@ -92,8 +92,14 @@ func runInit(args []string, out io.Writer) error {
 	if err := checkBrand(brandYAML); err != nil {
 		return fmt.Errorf("the brand file init would write doesn't load (a bug in init; nothing was written): %w", err)
 	}
-	for _, f := range []struct{ path, text string }{{brandPath, brandYAML}, {".env", envText}} {
-		if err := writeKeepingOld(f.path, f.text, *force); err != nil {
+	// brand.yaml must be readable by the container's own user (the image
+	// runs as `app`, and compose bind-mounts config/): 0644. .env holds
+	// secrets and is read by compose on the host: 0600.
+	for _, f := range []struct {
+		path, text string
+		mode       os.FileMode
+	}{{brandPath, brandYAML, 0o644}, {".env", envText, 0o600}} {
+		if err := writeKeepingOld(f.path, f.text, f.mode, *force); err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "wrote %s\n", f.path)
@@ -198,7 +204,7 @@ func checkBrand(text string) error {
 	return err
 }
 
-func writeKeepingOld(path, text string, force bool) error {
+func writeKeepingOld(path, text string, mode os.FileMode, force bool) error {
 	if _, err := os.Stat(path); err == nil {
 		if !force {
 			return fmt.Errorf("%s exists", path)
@@ -210,7 +216,10 @@ func writeKeepingOld(path, text string, force bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(text), 0o600) // .env holds secrets
+	if err := os.WriteFile(path, []byte(text), mode); err != nil {
+		return err
+	}
+	return os.Chmod(path, mode) // WriteFile's mode is cut by the umask; say exactly what we mean
 }
 
 func randomSecret(n int) (string, error) {
