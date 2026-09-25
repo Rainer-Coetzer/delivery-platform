@@ -53,6 +53,10 @@ class Currency {
     if (m == null) return null;
     final fraction = m.group(2) ?? '';
     if (fraction.length > minorUnits) return null;
+    // 12 digits of whole units: a trillion is more than any price, and it
+    // keeps the result exact where ints are doubles (web: 2^53) instead of
+    // int.parse throwing on overflow (native).
+    if (m.group(1)!.length > 12) return null;
     final whole = int.parse(m.group(1)!);
     final minor = fraction.isEmpty ? 0 : int.parse(fraction.padRight(minorUnits, '0'));
     return whole * math.pow(10, minorUnits).toInt() + minor;

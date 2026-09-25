@@ -33,7 +33,7 @@ void main() {
     expect(nad.parse('65,50'), 6550); // a decimal comma (af)
     expect(nad.parse('0.29'), 29); // 0.29 * 100 is 28.999... as a double
     expect(nad.parse('65.'), 6500);
-    for (final bad in ['', 'abc', '-5', '65.505', '6 5', '1e3', '.5']) {
+    for (final bad in ['', 'abc', '-5', '65.505', '6 5', '1e3', '.5', '99999999999999999999']) {
       expect(nad.parse(bad), isNull, reason: bad);
     }
     const jpy = Currency(code: 'JPY', symbol: '¥', minorUnits: 0);
