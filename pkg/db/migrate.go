@@ -151,13 +151,28 @@ func migrate(ctx context.Context, dsn, schema string, fsys fs.FS) error {
 	return nil
 }
 
+// createSchema creates the schema if it's missing. CREATE SCHEMA IF NOT
+// EXISTS is not safe against itself: two replicas booting together can
+// both pass the "not exists" check and one then fails on a duplicate key.
+// The advisory lock (the same key the migrations take) serialises them.
 func createSchema(ctx context.Context, dsn, schema string) error {
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		return fmt.Errorf("connect to create schema %q: %w", schema, err)
 	}
 	defer conn.Close(ctx)
-	if _, err := conn.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize()); err != nil {
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("create schema %q: %w", schema, err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", lockID("migrate:"+schema)); err != nil {
+		return fmt.Errorf("lock to create schema %q: %w", schema, err)
+	}
+	if _, err := tx.Exec(ctx, "CREATE SCHEMA IF NOT EXISTS "+pgx.Identifier{schema}.Sanitize()); err != nil {
+		return fmt.Errorf("create schema %q: %w", schema, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("create schema %q: %w", schema, err)
 	}
 	return nil
