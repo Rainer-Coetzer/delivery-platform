@@ -1,7 +1,7 @@
 // Package consumers reacts to jobs.created (accept or reject based on
 // opening hours and stock), jobs.status-changed (the prep starts once
-// the job reaches PREPARING) and jobs.cancelled (release any reserved
-// stock).
+// the job reaches the confirmed milestone) and jobs.cancelled (release any
+// reserved stock).
 package consumers
 
 import (
@@ -13,6 +13,7 @@ import (
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
 	"github.com/rainercoetzer/delivery-platform/services/merchant/internal/domain"
 	"github.com/rainercoetzer/delivery-platform/services/merchant/internal/store"
@@ -52,6 +53,9 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 }
 
 func (h *Handlers) handleJobCreated(ctx context.Context, env events.Envelope, data events.JobCreatedData) error {
+	if data.MerchantID == "" {
+		return nil // a job with no merchant stop (courier): nothing to accept
+	}
 	return h.Pool.WithTx(ctx, func(tx pgx.Tx) error {
 		isNew, err := db.InsertIfNew(ctx, tx, env.EventID, env.EventType)
 		if err != nil || !isNew {
@@ -72,7 +76,7 @@ func (h *Handlers) handleJobCreated(ctx context.Context, env events.Envelope, da
 
 		if err := store.InsertMerchantJob(ctx, tx, &store.MerchantJob{
 			JobID: data.JobID, MerchantID: data.MerchantID, Status: store.StatusPending,
-			Items: data.Items, Pickup: data.Pickup, Dropoff: data.Dropoff,
+			Items: data.Items,
 		}); err != nil {
 			return err
 		}
@@ -162,11 +166,11 @@ func (h *Handlers) handleJobCancelled(ctx context.Context, env events.Envelope, 
 	})
 }
 
-// handleStatusChanged tracks the jobs module's CONFIRMED -> PREPARING
-// step: that is the moment payment and acceptance are both in, so the
-// prep may start and the job may later be marked ready.
+// handleStatusChanged starts the prep when the job reaches the confirmed
+// milestone: in food that is payment and acceptance both in. It keys on
+// the milestone, not a state name, so a pack can call its states anything.
 func (h *Handlers) handleStatusChanged(ctx context.Context, env events.Envelope, data events.JobStatusChangedData) error {
-	if data.To != events.StatusPreparing {
+	if data.ToMilestone != lifecycle.Confirmed {
 		return nil
 	}
 	return h.Pool.WithTx(ctx, func(tx pgx.Tx) error {
@@ -179,7 +183,7 @@ func (h *Handlers) handleStatusChanged(ctx context.Context, env events.Envelope,
 			return err
 		}
 		if !moved {
-			h.Log.Warn("PREPARING for a job not in ACCEPTED, ignoring", "jobId", data.JobID)
+			h.Log.Warn("confirmed for a job this merchant hasn't accepted, ignoring", "jobId", data.JobID)
 		}
 		return nil
 	})

@@ -1,16 +1,19 @@
 // Package store persists the Job aggregate to Postgres. It is a plain
 // pgx repository (no code generator) kept intentionally small: every query
-// this service needs, in one file, easy to read alongside domain.Job.
+// this module needs, in one file, easy to read alongside domain.Job.
 package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
+	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/domain"
 )
 
@@ -22,32 +25,51 @@ type Store struct {
 
 func New(pool *db.Pool) *Store { return &Store{pool: pool} }
 
-// Create inserts a brand-new job and its line items inside tx.
-func Create(ctx context.Context, tx pgx.Tx, o *domain.Job) error {
-	_, err := tx.Exec(ctx, `
+// Create inserts a brand-new job with its lines and stops inside tx, and
+// records how it got to its current state: the initial state, then any
+// steps it settled through on creation.
+func Create(ctx context.Context, tx pgx.Tx, j *domain.Job, initial string, settled []lifecycle.Step) error {
+	facts, err := factsJSON(j.Facts)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
 		INSERT INTO jobs (
-			id, customer_id, customer_name, merchant_id, merchant_name, status,
-			paid, merchant_accepted, subtotal_cents, delivery_fee_cents, surge_multiplier,
-			total_cents, payment_method, pickup_lat, pickup_lng, pickup_label,
-			dropoff_lat, dropoff_lng, dropoff_label
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
-		o.ID, o.CustomerID, o.CustomerName, o.MerchantID, o.MerchantName, o.Status,
-		o.Paid, o.MerchantAccepted, o.SubtotalCents, o.DeliveryFeeCents, o.SurgeMultiplier,
-		o.TotalCents, o.PaymentMethod, o.Pickup.Lat, o.Pickup.Lng, nullStr(o.Pickup.Label),
-		o.Dropoff.Lat, o.Dropoff.Lng, nullStr(o.Dropoff.Label))
+			id, pack, customer_id, customer_name, merchant_id, merchant_name, status, milestone, facts,
+			subtotal_cents, delivery_fee_cents, surge_multiplier, total_cents, payment_method
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+		j.ID, j.Pack, j.CustomerID, j.CustomerName, nullStr(j.MerchantID), nullStr(j.MerchantName), j.Status, j.Milestone, facts,
+		j.SubtotalCents, j.DeliveryFeeCents, j.SurgeMultiplier, j.TotalCents, j.PaymentMethod)
 	if err != nil {
 		return fmt.Errorf("insert job: %w", err)
 	}
-	for _, item := range o.Items {
+	for _, item := range j.Items {
 		_, err := tx.Exec(ctx, `
 			INSERT INTO job_lines (job_id, catalogue_item_id, name, quantity, unit_price_cents)
 			VALUES ($1,$2,$3,$4,$5)`,
-			o.ID, item.CatalogueItemID, item.Name, item.Quantity, item.UnitPriceCents)
+			j.ID, item.CatalogueItemID, item.Name, item.Quantity, item.UnitPriceCents)
 		if err != nil {
-			return fmt.Errorf("insert job item: %w", err)
+			return fmt.Errorf("insert job line: %w", err)
 		}
 	}
-	return recordHistory(ctx, tx, o.ID, "", o.Status, "")
+	for _, s := range j.Stops {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO job_stops (job_id, seq, kind, lat, lng, label, merchant_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			j.ID, s.Seq, s.Kind, s.Location.Lat, s.Location.Lng, nullStr(s.Location.Label), nullStr(s.MerchantID))
+		if err != nil {
+			return fmt.Errorf("insert job stop %d: %w", s.Seq, err)
+		}
+	}
+	if err := recordHistory(ctx, tx, j.ID, "", initial, ""); err != nil {
+		return err
+	}
+	for _, s := range settled {
+		if err := recordHistory(ctx, tx, j.ID, s.From, s.To, ""); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func recordHistory(ctx context.Context, tx pgx.Tx, jobID, from, to, reason string) error {
@@ -55,30 +77,76 @@ func recordHistory(ctx context.Context, tx pgx.Tx, jobID, from, to, reason strin
 		INSERT INTO job_events (job_id, from_status, to_status, reason)
 		VALUES ($1,$2,$3,$4)`, jobID, from, to, nullStr(reason))
 	if err != nil {
-		return fmt.Errorf("insert job status history: %w", err)
+		return fmt.Errorf("insert job history: %w", err)
 	}
 	return nil
 }
 
-// GetForUpdate loads a job and locks its row for the duration of tx, so
-// two consumers handling events for the same order (e.g. payments.completed
-// and merchant.job-accepted arriving close together) serialize instead
-// of racing on MaybeConfirm.
+// GetForUpdate loads a job with its lines and stops, and locks its row for
+// the duration of tx, so two consumers handling events for the same job
+// (e.g. payments.completed and merchant.job-accepted arriving close
+// together) serialize instead of racing on the facts.
 func GetForUpdate(ctx context.Context, tx pgx.Tx, id string) (*domain.Job, error) {
-	return scanJob(tx.QueryRow(ctx, baseSelect+` WHERE id = $1 FOR UPDATE`, id))
+	j, err := scanJob(tx.QueryRow(ctx, baseSelect+` WHERE id = $1 FOR UPDATE`, id))
+	if err != nil {
+		return nil, err
+	}
+	return j, loadChildren(ctx, tx, j)
 }
 
 func (s *Store) Get(ctx context.Context, id string) (*domain.Job, error) {
-	o, err := scanJob(s.pool.QueryRow(ctx, baseSelect+` WHERE id = $1`, id))
+	j, err := scanJob(s.pool.QueryRow(ctx, baseSelect+` WHERE id = $1`, id))
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.items(ctx, s.pool, id)
-	if err != nil {
-		return nil, err
+	return j, loadChildren(ctx, s.pool, j)
+}
+
+func loadChildren(ctx context.Context, q queryer, j *domain.Job) error {
+	var err error
+	if j.Items, err = items(ctx, q, j.ID); err != nil {
+		return err
 	}
-	o.Items = items
-	return o, nil
+	j.Stops, err = stops(ctx, q, j.ID)
+	return err
+}
+
+// Save persists the job after lifecycle steps (state, milestone, facts,
+// agent, cancel reason) and appends one history row per step, inside tx.
+func Save(ctx context.Context, tx pgx.Tx, j *domain.Job, steps []lifecycle.Step) error {
+	facts, err := factsJSON(j.Facts)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE jobs SET status=$2, milestone=$3, facts=$4, agent_id=$5, cancel_reason=$6, updated_at=now()
+		WHERE id=$1`,
+		j.ID, j.Status, j.Milestone, facts, nullStr(j.AgentID), nullStr(j.CancelReason))
+	if err != nil {
+		return fmt.Errorf("update job: %w", err)
+	}
+	for _, s := range steps {
+		reason := ""
+		if s.Milestone == lifecycle.Cancelled {
+			reason = j.CancelReason
+		}
+		if err := recordHistory(ctx, tx, j.ID, s.From, s.To, reason); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// MarkStopCompleted persists what domain.Job.CompleteStop decided.
+func MarkStopCompleted(ctx context.Context, tx pgx.Tx, jobID string, seq int, at time.Time) error {
+	tag, err := tx.Exec(ctx, `UPDATE job_stops SET completed_at=$3 WHERE job_id=$1 AND seq=$2 AND completed_at IS NULL`, jobID, seq, at)
+	if err != nil {
+		return fmt.Errorf("complete stop %d of job %s: %w", seq, jobID, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("complete stop %d of job %s: no open stop to complete", seq, jobID)
+	}
+	return nil
 }
 
 func (s *Store) ListByCustomer(ctx context.Context, customerID string, limit int) ([]*domain.Job, error) {
@@ -89,6 +157,8 @@ func (s *Store) ListByMerchant(ctx context.Context, merchantID string, limit int
 	return s.list(ctx, baseSelect+` WHERE merchant_id = $1 ORDER BY created_at DESC LIMIT $2`, merchantID, limit)
 }
 
+// list returns jobs without their lines and stops: list screens show
+// status and totals, and a detail call loads the rest.
 func (s *Store) list(ctx context.Context, query string, args ...any) ([]*domain.Job, error) {
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -97,63 +167,57 @@ func (s *Store) list(ctx context.Context, query string, args ...any) ([]*domain.
 	defer rows.Close()
 	var out []*domain.Job
 	for rows.Next() {
-		o, err := scanJobRow(rows)
+		j, err := scanJob(rows)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, o)
+		out = append(out, j)
 	}
 	return out, rows.Err()
 }
 
-func (s *Store) items(ctx context.Context, q queryer, jobID string) ([]domain.Item, error) {
-	rows, err := q.Query(ctx, `SELECT catalogue_item_id, name, quantity, unit_price_cents FROM job_lines WHERE job_id = $1`, jobID)
+func items(ctx context.Context, q queryer, jobID string) ([]domain.Item, error) {
+	rows, err := q.Query(ctx, `SELECT catalogue_item_id, name, quantity, unit_price_cents FROM job_lines WHERE job_id = $1 ORDER BY id`, jobID)
 	if err != nil {
-		return nil, fmt.Errorf("list job items: %w", err)
+		return nil, fmt.Errorf("list job lines: %w", err)
 	}
 	defer rows.Close()
-	var out []domain.Item
+	out := []domain.Item{}
 	for rows.Next() {
 		var it domain.Item
 		if err := rows.Scan(&it.CatalogueItemID, &it.Name, &it.Quantity, &it.UnitPriceCents); err != nil {
-			return nil, fmt.Errorf("scan job item: %w", err)
+			return nil, fmt.Errorf("scan job line: %w", err)
 		}
 		out = append(out, it)
 	}
 	return out, rows.Err()
 }
 
-// ApplyTransition persists a new status (and paid/accepted/agent flags) and
-// appends a history row, inside tx.
-func ApplyTransition(ctx context.Context, tx pgx.Tx, o *domain.Job, from string) error {
-	_, err := tx.Exec(ctx, `
-		UPDATE jobs SET status=$2, paid=$3, merchant_accepted=$4, agent_id=$5,
-			cancel_reason=$6, updated_at=now()
-		WHERE id=$1`,
-		o.ID, o.Status, o.Paid, o.MerchantAccepted, nullStr(o.AgentID), nullStr(o.CancelReason))
+func stops(ctx context.Context, q queryer, jobID string) ([]domain.Stop, error) {
+	rows, err := q.Query(ctx, `
+		SELECT seq, kind, lat, lng, coalesce(label,''), coalesce(merchant_id,''), completed_at
+		FROM job_stops WHERE job_id = $1 ORDER BY seq`, jobID)
 	if err != nil {
-		return fmt.Errorf("update job: %w", err)
+		return nil, fmt.Errorf("list job stops: %w", err)
 	}
-	return recordHistory(ctx, tx, o.ID, from, o.Status, o.CancelReason)
+	defer rows.Close()
+	out := []domain.Stop{}
+	for rows.Next() {
+		var s domain.Stop
+		if err := rows.Scan(&s.Seq, &s.Kind, &s.Location.Lat, &s.Location.Lng, &s.Location.Label, &s.MerchantID, &s.CompletedAt); err != nil {
+			return nil, fmt.Errorf("scan job stop: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
-// UpdateFlags persists paid/accepted/agent changes without a status
-// transition (e.g. recording payment before the merchant has responded).
-func UpdateFlags(ctx context.Context, tx pgx.Tx, o *domain.Job) error {
-	_, err := tx.Exec(ctx, `UPDATE jobs SET paid=$2, merchant_accepted=$3, agent_id=$4, updated_at=now() WHERE id=$1`,
-		o.ID, o.Paid, o.MerchantAccepted, nullStr(o.AgentID))
-	if err != nil {
-		return fmt.Errorf("update job flags: %w", err)
-	}
-	return nil
-}
-
-// CountOpen returns how many jobs for merchantID are not yet DELIVERED
-// or CANCELLED — used for the surge multiplier.
+// CountOpen returns how many of merchantID's jobs haven't finished, for the
+// surge multiplier.
 func (s *Store) CountOpen(ctx context.Context, merchantID string) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx,
-		`SELECT count(*) FROM jobs WHERE merchant_id=$1 AND status NOT IN ('DELIVERED','CANCELLED')`,
+		`SELECT count(*) FROM jobs WHERE merchant_id=$1 AND milestone NOT IN ('completed','cancelled')`,
 		merchantID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count open jobs: %w", err)
@@ -161,10 +225,9 @@ func (s *Store) CountOpen(ctx context.Context, merchantID string) (int, error) {
 	return n, nil
 }
 
-const baseSelect = `SELECT id, customer_id, customer_name, merchant_id, merchant_name, status,
-	paid, merchant_accepted, subtotal_cents, delivery_fee_cents, surge_multiplier, total_cents,
-	payment_method, pickup_lat, pickup_lng, coalesce(pickup_label,''), dropoff_lat, dropoff_lng,
-	coalesce(dropoff_label,''), coalesce(agent_id,''), coalesce(cancel_reason,''), created_at, updated_at
+const baseSelect = `SELECT id, pack, customer_id, customer_name, coalesce(merchant_id,''), coalesce(merchant_name,''),
+	status, milestone, facts, subtotal_cents, delivery_fee_cents, surge_multiplier, total_cents,
+	payment_method, coalesce(agent_id,''), coalesce(cancel_reason,''), created_at, updated_at
 	FROM jobs`
 
 type queryer interface {
@@ -176,21 +239,33 @@ type rowScanner interface {
 }
 
 func scanJob(row rowScanner) (*domain.Job, error) {
-	o := &domain.Job{}
-	err := row.Scan(&o.ID, &o.CustomerID, &o.CustomerName, &o.MerchantID, &o.MerchantName, &o.Status,
-		&o.Paid, &o.MerchantAccepted, &o.SubtotalCents, &o.DeliveryFeeCents, &o.SurgeMultiplier, &o.TotalCents,
-		&o.PaymentMethod, &o.Pickup.Lat, &o.Pickup.Lng, &o.Pickup.Label, &o.Dropoff.Lat, &o.Dropoff.Lng,
-		&o.Dropoff.Label, &o.AgentID, &o.CancelReason, &o.CreatedAt, &o.UpdatedAt)
+	j := &domain.Job{}
+	var facts []byte
+	err := row.Scan(&j.ID, &j.Pack, &j.CustomerID, &j.CustomerName, &j.MerchantID, &j.MerchantName,
+		&j.Status, &j.Milestone, &facts, &j.SubtotalCents, &j.DeliveryFeeCents, &j.SurgeMultiplier, &j.TotalCents,
+		&j.PaymentMethod, &j.AgentID, &j.CancelReason, &j.CreatedAt, &j.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("scan job: %w", err)
 	}
-	return o, nil
+	if err := json.Unmarshal(facts, &j.Facts); err != nil {
+		return nil, fmt.Errorf("job %s: facts column is not a JSON object of booleans: %w", j.ID, err)
+	}
+	return j, nil
 }
 
-func scanJobRow(rows pgx.Rows) (*domain.Job, error) { return scanJob(rows) }
+func factsJSON(f map[string]bool) ([]byte, error) {
+	if f == nil {
+		f = map[string]bool{}
+	}
+	b, err := json.Marshal(f)
+	if err != nil {
+		return nil, fmt.Errorf("encode facts: %w", err)
+	}
+	return b, nil
+}
 
 func nullStr(s string) any {
 	if s == "" {

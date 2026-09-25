@@ -1,11 +1,14 @@
-// Package consumers assigns an agent as soon as a merchant marks a job
-// ready (or queues the job for retry if no agent is free), and releases
-// the agent again if the job is cancelled.
+// Package consumers assigns an agent as soon as a job reaches the
+// ready_for_dispatch milestone (or queues it for retry if no agent is
+// free), and releases the agent again if the job is cancelled. Which state
+// that is, and what got it there (food: the merchant marking it ready), is
+// the pack's business.
 package consumers
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/domain"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/progress"
@@ -20,7 +24,7 @@ import (
 )
 
 // Topics this service consumes, kept next to the handlers that use them.
-var Topics = []string{events.MerchantReady, events.JobCancelled}
+var Topics = []string{events.JobStatusChanged, events.JobCancelled}
 
 type Handlers struct {
 	Pool *db.Pool
@@ -29,12 +33,19 @@ type Handlers struct {
 
 func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 	switch env.EventType {
-	case events.MerchantReady:
-		data, err := events.Decode[events.MerchantReadyData](env)
+	case events.JobStatusChanged:
+		data, err := events.Decode[events.JobStatusChangedData](env)
 		if err != nil {
 			return err
 		}
-		return h.handleReady(ctx, env, data)
+		if data.ToMilestone != lifecycle.ReadyForDispatch {
+			return nil
+		}
+		route, err := RouteFor(data)
+		if err != nil {
+			return err
+		}
+		return h.handleReady(ctx, env, route)
 	case events.JobCancelled:
 		data, err := events.Decode[events.JobCancelledData](env)
 		if err != nil {
@@ -46,26 +57,51 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 	}
 }
 
-func (h *Handlers) handleReady(ctx context.Context, env events.Envelope, data events.MerchantReadyData) error {
+// RouteFor picks the pickup and dropoff out of the stops the jobs module
+// sends with ready_for_dispatch: the first pickup and the last stop. A job
+// with more stops than that needs the multi-stop module (Phase C step 5).
+func RouteFor(data events.JobStatusChangedData) (*store.Route, error) {
+	if len(data.Stops) < 2 {
+		return nil, fmt.Errorf("job %s reached ready_for_dispatch with %d stops; dispatch needs a pickup and a dropoff", data.JobID, len(data.Stops))
+	}
+	var pickup *events.Stop
+	for i := range data.Stops {
+		if data.Stops[i].Kind == events.StopPickup && (pickup == nil || data.Stops[i].Seq < pickup.Seq) {
+			pickup = &data.Stops[i]
+		}
+	}
+	if pickup == nil {
+		return nil, fmt.Errorf("job %s has no pickup stop", data.JobID)
+	}
+	last := data.Stops[0]
+	for _, s := range data.Stops {
+		if s.Seq > last.Seq {
+			last = s
+		}
+	}
+	return &store.Route{
+		JobID: data.JobID, MerchantID: pickup.MerchantID,
+		PickupLat: pickup.Location.Lat, PickupLng: pickup.Location.Lng, PickupSeq: pickup.Seq,
+		DropoffLat: last.Location.Lat, DropoffLng: last.Location.Lng, DropoffSeq: last.Seq,
+	}, nil
+}
+
+func (h *Handlers) handleReady(ctx context.Context, env events.Envelope, route *store.Route) error {
 	return h.Pool.WithTx(ctx, func(tx pgx.Tx) error {
 		isNew, err := db.InsertIfNew(ctx, tx, env.EventID, env.EventType)
 		if err != nil || !isNew {
 			return err
 		}
-		outcome, err := TryAssign(ctx, tx, data.JobID, data.MerchantID, data.Pickup, data.Dropoff)
+		outcome, err := TryAssign(ctx, tx, route)
 		if err != nil {
 			return err
 		}
 		switch outcome {
 		case JobCancelled:
-			h.Log.Info("job-ready for a cancelled job, not dispatching", "jobId", data.JobID)
+			h.Log.Info("ready for dispatch, but the job is cancelled: not dispatching", "jobId", route.JobID)
 		case NoAgentFree:
-			h.Log.Info("no agent available, queued for retry", "jobId", data.JobID)
-			return store.InsertPending(ctx, tx, &store.PendingAssignment{
-				JobID: data.JobID, MerchantID: data.MerchantID,
-				PickupLat: data.Pickup.Lat, PickupLng: data.Pickup.Lng,
-				DropoffLat: data.Dropoff.Lat, DropoffLng: data.Dropoff.Lng,
-			})
+			h.Log.Info("no agent available, queued for retry", "jobId", route.JobID)
+			return store.InsertPending(ctx, tx, route)
 		}
 		return nil
 	})
@@ -122,7 +158,8 @@ const (
 // TryAssign locks and claims the nearest AVAILABLE agent to the pickup
 // point, creates the assignment, and inserts the dispatch.assigned outbox
 // event. It never assigns a tombstoned (cancelled) job.
-func TryAssign(ctx context.Context, tx pgx.Tx, jobID, merchantID string, pickup, dropoff events.Location) (AssignOutcome, error) {
+func TryAssign(ctx context.Context, tx pgx.Tx, r *store.Route) (AssignOutcome, error) {
+	jobID := r.JobID
 	if err := store.LockJob(ctx, tx, jobID); err != nil {
 		return 0, err
 	}
@@ -134,7 +171,7 @@ func TryAssign(ctx context.Context, tx pgx.Tx, jobID, merchantID string, pickup,
 		return JobCancelled, nil
 	}
 
-	agent, err := store.FindNearestAvailableForUpdate(ctx, tx, pickup.Lat, pickup.Lng)
+	agent, err := store.FindNearestAvailableForUpdate(ctx, tx, r.PickupLat, r.PickupLng)
 	if errors.Is(err, store.ErrNotFound) {
 		return NoAgentFree, nil
 	}
@@ -145,10 +182,11 @@ func TryAssign(ctx context.Context, tx pgx.Tx, jobID, merchantID string, pickup,
 		return 0, err
 	}
 
-	eta := domain.ETAMinutes(domain.HaversineMeters(agent.Lat, agent.Lng, pickup.Lat, pickup.Lng))
+	eta := domain.ETAMinutes(domain.HaversineMeters(agent.Lat, agent.Lng, r.PickupLat, r.PickupLng))
 	assignment := &store.Assignment{
-		ID: uuid.NewString(), JobID: jobID, AgentID: agent.ID, MerchantID: merchantID,
-		PickupLat: pickup.Lat, PickupLng: pickup.Lng, DropoffLat: dropoff.Lat, DropoffLng: dropoff.Lng,
+		ID: uuid.NewString(), JobID: jobID, AgentID: agent.ID, MerchantID: r.MerchantID,
+		PickupLat: r.PickupLat, PickupLng: r.PickupLng, DropoffLat: r.DropoffLat, DropoffLng: r.DropoffLng,
+		PickupSeq: r.PickupSeq, DropoffSeq: r.DropoffSeq,
 		Status: progress.StatusAssigned, EtaMinutes: eta,
 	}
 	if err := store.InsertAssignment(ctx, tx, assignment); err != nil {

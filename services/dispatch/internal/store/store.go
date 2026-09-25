@@ -27,14 +27,18 @@ type Assignment struct {
 	ID         string  `json:"id"`
 	JobID      string  `json:"jobId"`
 	AgentID    string  `json:"agentId"`
-	MerchantID string  `json:"merchantId"`
+	MerchantID string  `json:"merchantId,omitempty"`
 	PickupLat  float64 `json:"pickupLat"`
 	PickupLng  float64 `json:"pickupLng"`
 	DropoffLat float64 `json:"dropoffLat"`
 	DropoffLng float64 `json:"dropoffLng"`
-	Status     string  `json:"status"`
-	Simulated  bool    `json:"simulated"`
-	EtaMinutes int     `json:"etaMinutes"`
+	// The job's stop numbers for the pickup and the dropoff, which is what
+	// dispatch.stop-completed reports back to the jobs module.
+	PickupSeq  int    `json:"pickupSeq"`
+	DropoffSeq int    `json:"dropoffSeq"`
+	Status     string `json:"status"`
+	Simulated  bool   `json:"simulated"`
+	EtaMinutes int    `json:"etaMinutes"`
 }
 
 type Store struct{ pool *db.Pool }
@@ -144,9 +148,11 @@ func UpdateAgentLocation(ctx context.Context, q db.Queryer, id string, lat, lng 
 
 func InsertAssignment(ctx context.Context, tx pgx.Tx, d *Assignment) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO assignments (id, job_id, agent_id, merchant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, status, eta_minutes)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		d.ID, d.JobID, d.AgentID, d.MerchantID, d.PickupLat, d.PickupLng, d.DropoffLat, d.DropoffLng, d.Status, d.EtaMinutes)
+		INSERT INTO assignments (id, job_id, agent_id, merchant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
+			pickup_seq, dropoff_seq, status, eta_minutes)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		d.ID, d.JobID, d.AgentID, nullStr(d.MerchantID), d.PickupLat, d.PickupLng, d.DropoffLat, d.DropoffLng,
+		d.PickupSeq, d.DropoffSeq, d.Status, d.EtaMinutes)
 	if err != nil {
 		return fmt.Errorf("insert assignment: %w", err)
 	}
@@ -263,14 +269,15 @@ func UpdateETA(ctx context.Context, q db.Queryer, id string, etaMinutes int) err
 	return nil
 }
 
-const baseSelect = `SELECT id, job_id, coalesce(agent_id,''), merchant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, status, simulated, eta_minutes FROM assignments`
+const baseSelect = `SELECT id, job_id, coalesce(agent_id,''), coalesce(merchant_id,''), pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
+	pickup_seq, dropoff_seq, status, simulated, eta_minutes FROM assignments`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanAssignment(row rowScanner) (*Assignment, error) {
 	d := &Assignment{}
 	err := row.Scan(&d.ID, &d.JobID, &d.AgentID, &d.MerchantID, &d.PickupLat, &d.PickupLng,
-		&d.DropoffLat, &d.DropoffLng, &d.Status, &d.Simulated, &d.EtaMinutes)
+		&d.DropoffLat, &d.DropoffLng, &d.PickupSeq, &d.DropoffSeq, &d.Status, &d.Simulated, &d.EtaMinutes)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -280,22 +287,27 @@ func scanAssignment(row rowScanner) (*Assignment, error) {
 	return d, nil
 }
 
-// --- Pending assignments (no agent was free at job-ready time) ---
+// --- Routes and pending assignments ---
 
-type PendingAssignment struct {
+// Route is a job as dispatch sees it: where to pick up, where to drop off,
+// and which of the job's stops those are. It is what gets assigned, and
+// what waits in pending_assignments when no agent is free.
+type Route struct {
 	JobID      string
-	MerchantID string
+	MerchantID string // "" when the pickup isn't at a merchant
 	PickupLat  float64
 	PickupLng  float64
 	DropoffLat float64
 	DropoffLng float64
+	PickupSeq  int
+	DropoffSeq int
 }
 
-func InsertPending(ctx context.Context, tx pgx.Tx, p *PendingAssignment) error {
+func InsertPending(ctx context.Context, tx pgx.Tx, p *Route) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO pending_assignments (job_id, merchant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng)
-		VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (job_id) DO NOTHING`,
-		p.JobID, p.MerchantID, p.PickupLat, p.PickupLng, p.DropoffLat, p.DropoffLng)
+		INSERT INTO pending_assignments (job_id, merchant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (job_id) DO NOTHING`,
+		p.JobID, nullStr(p.MerchantID), p.PickupLat, p.PickupLng, p.DropoffLat, p.DropoffLng, p.PickupSeq, p.DropoffSeq)
 	if err != nil {
 		return fmt.Errorf("insert pending assignment: %w", err)
 	}
@@ -310,19 +322,27 @@ func DeletePending(ctx context.Context, tx pgx.Tx, jobID string) error {
 	return nil
 }
 
-func (s *Store) ListPending(ctx context.Context) ([]*PendingAssignment, error) {
-	rows, err := s.pool.Query(ctx, `SELECT job_id, merchant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng FROM pending_assignments ORDER BY created_at`)
+func (s *Store) ListPending(ctx context.Context) ([]*Route, error) {
+	rows, err := s.pool.Query(ctx, `SELECT job_id, coalesce(merchant_id,''), pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq
+		FROM pending_assignments ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list pending assignments: %w", err)
 	}
 	defer rows.Close()
-	var out []*PendingAssignment
+	var out []*Route
 	for rows.Next() {
-		p := &PendingAssignment{}
-		if err := rows.Scan(&p.JobID, &p.MerchantID, &p.PickupLat, &p.PickupLng, &p.DropoffLat, &p.DropoffLng); err != nil {
+		p := &Route{}
+		if err := rows.Scan(&p.JobID, &p.MerchantID, &p.PickupLat, &p.PickupLng, &p.DropoffLat, &p.DropoffLng, &p.PickupSeq, &p.DropoffSeq); err != nil {
 			return nil, fmt.Errorf("scan pending assignment: %w", err)
 		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+func nullStr(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

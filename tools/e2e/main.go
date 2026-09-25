@@ -34,7 +34,8 @@ type catalogueItem struct {
 
 type job struct {
 	ID           string
-	Status       string
+	Status       string // the pack's state name, for the log
+	Milestone    string // what the run decides on
 	CancelReason string
 	TotalCents   int64
 }
@@ -121,18 +122,18 @@ func run() error {
 			fmt.Printf("   %5.1fs  %s\n", time.Since(start).Seconds(), o.Status)
 			last = o.Status
 		}
-		switch o.Status {
-		case "DELIVERED":
-			fmt.Printf("-> E2E PASSED: delivered in %.0fs\n", time.Since(start).Seconds())
+		switch o.Milestone {
+		case "completed":
+			fmt.Printf("-> E2E PASSED: %s in %.0fs\n", o.Status, time.Since(start).Seconds())
 			return nil
-		case "CANCELLED":
+		case "cancelled":
 			return fmt.Errorf("job %s was cancelled: %s", o.ID, o.CancelReason)
 		}
 		time.Sleep(2 * time.Second)
 	}
 	hint := ""
-	if last == "PREPARING" || last == "READY" || last == "OUT_FOR_DELIVERY" {
-		hint = " (stuck here usually means DEMO_AUTOPILOT is off: start with -f docker-compose.dev.yml)"
+	if o.Milestone != "created" {
+		hint = " (stuck after confirmation usually means DEMO_AUTOPILOT is off: start with -f docker-compose.dev.yml)"
 	}
 	return fmt.Errorf("job %s still %s after %s%s", o.ID, last, timeout, hint)
 }

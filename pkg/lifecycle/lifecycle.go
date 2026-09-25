@@ -203,8 +203,12 @@ func (m *Machine) validate(known Known, required []string) error {
 	var problems []string
 	add := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
 
-	if _, ok := m.byName[m.Initial]; !ok {
+	if st, ok := m.byName[m.Initial]; !ok {
 		add("initial state %q is not declared", m.Initial)
+	} else if st.Milestone != Created {
+		// A job's milestone is the last one it reached, so it has to start
+		// on one: every consumer reads jobs.created as "created".
+		add("initial state %s must map milestone created", m.Initial)
 	}
 	milestoneOwner := map[string]string{}
 	for _, st := range m.States {
@@ -447,16 +451,51 @@ func (m *Machine) Apply(state string, facts map[string]bool, t Trigger) ([]Step,
 	}
 
 	// Automatic transitions; validation guarantees they can't cycle, and a
-	// path can't be longer than the number of states.
+	// path can't be longer than the number of states (Settle's bound).
+	return append(steps, m.Settle(state, next)...), next, nil
+}
+
+// Settle takes the automatic transitions available from state, for a job
+// that was just created (nothing triggered it, but its initial state may
+// move on by itself).
+func (m *Machine) Settle(state string, facts map[string]bool) []Step {
+	var steps []Step
 	for range m.States {
-		tr, ok := m.autoFrom(state, next)
+		tr, ok := m.autoFrom(state, facts)
 		if !ok {
 			break
 		}
 		steps = append(steps, m.step(state, tr.To))
 		state = tr.To
 	}
-	return steps, next, nil
+	return steps
+}
+
+// Events lists every event this lifecycle reacts to (transition triggers
+// and fact sources), sorted: what the jobs module subscribes to.
+func (m *Machine) Events() []string {
+	seen := map[string]bool{}
+	for _, t := range m.Transitions {
+		if t.On != "" {
+			seen[t.On] = true
+		}
+	}
+	for _, f := range m.Facts {
+		if f.On != "" {
+			seen[f.On] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for e := range seen {
+		out = append(out, e)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Reacts reports whether event can trigger a transition or set a fact.
+func (m *Machine) Reacts(event string) bool {
+	return slices.Contains(m.Events(), event)
 }
 
 // SetFact applies a role-set fact (e.g. an admin approving a job), then any
@@ -479,16 +518,7 @@ func (m *Machine) SetFact(state string, facts map[string]bool, fact, role string
 		next[k] = v
 	}
 	next[fact] = true
-	var steps []Step
-	for range m.States {
-		tr, ok := m.autoFrom(state, next)
-		if !ok {
-			break
-		}
-		steps = append(steps, m.step(state, tr.To))
-		state = tr.To
-	}
-	return steps, next, nil
+	return m.Settle(state, next), next, nil
 }
 
 func (m *Machine) match(state string, facts map[string]bool, t Trigger) (Transition, bool) {

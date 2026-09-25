@@ -16,8 +16,11 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
+	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
+	"github.com/rainercoetzer/delivery-platform/pkg/packs"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/catalogue"
+	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/consumers"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/domain"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/store"
 )
@@ -33,6 +36,7 @@ type API struct {
 	Store     *store.Store
 	Catalogue Catalogue
 	Log       *slog.Logger
+	Pack      *packs.Pack
 	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
 	Auth func(http.Handler) http.Handler
 }
@@ -42,6 +46,7 @@ func (a *API) Routes(r chi.Router) {
 		r.Use(a.Auth)
 		r.With(auth.RequireRole(auth.RoleCustomer)).Post("/", a.createJob)
 		r.Get("/{id}", a.getJob)
+		r.Post("/{id}/transitions", a.transition)
 		r.Get("/", a.listJobs)
 	})
 }
@@ -79,6 +84,13 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 	var req createJobRequest
 	if err := httpx.Decode(r, &req); err != nil {
 		httpx.BadRequest(w, "invalid request body: "+err.Error())
+		return
+	}
+	// Other stop templates (courier's point_to_point, freight's multi_stop)
+	// arrive with their packs; until then, say so rather than guess.
+	if a.Pack.Job.Stops != packs.StopsMerchantToCustomer {
+		httpx.WriteError(w, http.StatusNotImplemented, "not_implemented",
+			"pack "+a.Pack.Name+" uses stops: "+a.Pack.Job.Stops+", which job creation doesn't support yet")
 		return
 	}
 	if req.MerchantID == "" || req.PaymentMethod == "" {
@@ -127,22 +139,28 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 	deliveryFee := int64(float64(baseDeliveryFeeCents) * surge)
 	total := subtotal + deliveryFee
 
-	pickup := events.Location{Lat: rest.Lat, Lng: rest.Lng, Label: rest.Name}
+	m := a.Pack.Lifecycle
 	job := &domain.Job{
 		ID:               uuid.NewString(),
+		Pack:             a.Pack.Name,
 		CustomerID:       caller.UserID,
 		CustomerName:     caller.Name,
 		MerchantID:       rest.ID,
 		MerchantName:     rest.Name,
-		Status:           events.StatusCreated,
+		Status:           m.Initial,
+		Milestone:        lifecycle.Created,
+		Facts:            map[string]bool{},
 		Items:            items,
 		SubtotalCents:    subtotal,
 		DeliveryFeeCents: deliveryFee,
 		SurgeMultiplier:  surge,
 		TotalCents:       total,
 		PaymentMethod:    req.PaymentMethod,
-		Pickup:           pickup,
-		Dropoff:          req.Dropoff,
+		Stops: []domain.Stop{
+			{Stop: events.Stop{Seq: 0, Kind: events.StopPickup, MerchantID: rest.ID,
+				Location: events.Location{Lat: rest.Lat, Lng: rest.Lng, Label: rest.Name}}},
+			{Stop: events.Stop{Seq: 1, Kind: events.StopDropoff, Location: req.Dropoff}},
+		},
 	}
 
 	eventItems := make([]events.JobLine, 0, len(items))
@@ -154,18 +172,24 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		MerchantID: job.MerchantID, MerchantName: job.MerchantName,
 		Items: eventItems, SubtotalCents: subtotal, DeliveryFeeCents: deliveryFee,
 		SurgeMultiplier: surge, TotalCents: total, PaymentMethod: req.PaymentMethod,
-		Pickup: pickup, Dropoff: req.Dropoff,
+		Pack: job.Pack, State: job.Status, Stops: job.EventStops(),
 	})
 	if err != nil {
 		httpx.Internal(w, "could not build event")
 		return
 	}
+	// jobs.created describes the job as created; settling (a pack whose
+	// initial state moves on by itself) follows as status changes.
+	settled := job.Settle(m)
 
 	err = a.Pool.WithTx(ctx, func(tx pgx.Tx) error {
-		if err := store.Create(ctx, tx, job); err != nil {
+		if err := store.Create(ctx, tx, job, m.Initial, settled); err != nil {
 			return err
 		}
-		return outbox.Insert(ctx, tx, env)
+		if err := outbox.Insert(ctx, tx, env); err != nil {
+			return err
+		}
+		return consumers.PublishSteps(ctx, tx, job, settled)
 	})
 	if err != nil {
 		a.Log.Error("create job", "error", err)
@@ -214,12 +238,69 @@ func (a *API) getJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, "could not load job")
 		return
 	}
-	if !CanView(auth.MustFromContext(r.Context()), job) {
+	caller := auth.MustFromContext(r.Context())
+	if !CanView(caller, job) {
 		httpx.Forbidden(w, "this isn't your job")
 		return
 	}
+	job.Actions = a.Pack.Lifecycle.RoleTargets(job.Status, string(caller.Role))
 	httpx.WriteJSON(w, http.StatusOK, job)
 }
+
+type transitionRequest struct {
+	To     string `json:"to"`
+	Reason string `json:"reason"`
+}
+
+// transition is a person moving a job: a customer cancelling, an admin
+// stepping in. Who may make which move is the pack's lifecycle (`by:`
+// roles); on top of that the caller must be someone who can see the job,
+// so a merchant can't cancel another merchant's job.
+func (a *API) transition(w http.ResponseWriter, r *http.Request) {
+	caller := auth.MustFromContext(r.Context())
+	var req transitionRequest
+	if err := httpx.Decode(r, &req); err != nil || req.To == "" {
+		httpx.BadRequest(w, `body must be {"to": "<state>", "reason": "..."}`)
+		return
+	}
+	ctx := r.Context()
+	m := a.Pack.Lifecycle
+	var job *domain.Job
+	err := a.Pool.WithTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		if job, err = store.GetForUpdate(ctx, tx, chi.URLParam(r, "id")); err != nil {
+			return err
+		}
+		if !CanView(caller, job) {
+			return errNotYours
+		}
+		steps, err := job.Apply(m, lifecycle.Trigger{Role: string(caller.Role), To: req.To}, req.Reason)
+		if err != nil {
+			return err
+		}
+		if err := store.Save(ctx, tx, job, steps); err != nil {
+			return err
+		}
+		return consumers.PublishSteps(ctx, tx, job, steps)
+	})
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		httpx.NotFound(w, "job not found")
+	case errors.Is(err, errNotYours):
+		httpx.Forbidden(w, "this isn't your job")
+	case errors.Is(err, lifecycle.ErrNoTransition):
+		httpx.WriteError(w, http.StatusConflict, "not_allowed",
+			"a "+string(caller.Role)+" can't move this job from "+job.Status+" to "+req.To)
+	case err != nil:
+		a.Log.Error("transition job", "error", err)
+		httpx.Internal(w, "could not update job")
+	default:
+		job.Actions = m.RoleTargets(job.Status, string(caller.Role))
+		httpx.WriteJSON(w, http.StatusOK, job)
+	}
+}
+
+var errNotYours = errors.New("caller may not see this job")
 
 // listJobs: customers always get their own jobs (a customerId param for
 // anyone else is refused, not silently replaced), merchants only their

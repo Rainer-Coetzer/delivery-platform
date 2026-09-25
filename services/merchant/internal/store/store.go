@@ -177,8 +177,6 @@ type MerchantJob struct {
 	MerchantID   string
 	Status       string
 	Items        []events.JobLine
-	Pickup       events.Location
-	Dropoff      events.Location
 	RejectReason string
 }
 
@@ -188,9 +186,9 @@ func InsertMerchantJob(ctx context.Context, tx pgx.Tx, o *MerchantJob) error {
 		return fmt.Errorf("marshal items: %w", err)
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO merchant_jobs (job_id, merchant_id, status, items, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		o.JobID, o.MerchantID, o.Status, items, o.Pickup.Lat, o.Pickup.Lng, o.Dropoff.Lat, o.Dropoff.Lng)
+		INSERT INTO merchant_jobs (job_id, merchant_id, status, items)
+		VALUES ($1,$2,$3,$4)`,
+		o.JobID, o.MerchantID, o.Status, items)
 	if err != nil {
 		return fmt.Errorf("insert merchant job: %w", err)
 	}
@@ -199,14 +197,14 @@ func InsertMerchantJob(ctx context.Context, tx pgx.Tx, o *MerchantJob) error {
 
 func GetMerchantJobForUpdate(ctx context.Context, tx pgx.Tx, jobID string) (*MerchantJob, error) {
 	row := tx.QueryRow(ctx, `
-		SELECT job_id, merchant_id, status, items, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, coalesce(reject_reason,'')
+		SELECT job_id, merchant_id, status, items, coalesce(reject_reason,'')
 		FROM merchant_jobs WHERE job_id=$1 FOR UPDATE`, jobID)
 	return scanMerchantJob(row)
 }
 
 func (s *Store) GetMerchantJob(ctx context.Context, jobID string) (*MerchantJob, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT job_id, merchant_id, status, items, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, coalesce(reject_reason,'')
+		SELECT job_id, merchant_id, status, items, coalesce(reject_reason,'')
 		FROM merchant_jobs WHERE job_id=$1`, jobID)
 	return scanMerchantJob(row)
 }
@@ -214,7 +212,7 @@ func (s *Store) GetMerchantJob(ctx context.Context, jobID string) (*MerchantJob,
 func scanMerchantJob(row rowScanner) (*MerchantJob, error) {
 	o := &MerchantJob{}
 	var itemsRaw []byte
-	err := row.Scan(&o.JobID, &o.MerchantID, &o.Status, &itemsRaw, &o.Pickup.Lat, &o.Pickup.Lng, &o.Dropoff.Lat, &o.Dropoff.Lng, &o.RejectReason)
+	err := row.Scan(&o.JobID, &o.MerchantID, &o.Status, &itemsRaw, &o.RejectReason)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound

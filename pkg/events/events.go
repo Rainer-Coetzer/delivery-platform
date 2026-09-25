@@ -27,10 +27,9 @@ const (
 	PaymentFailed    = "payments.failed"
 	PaymentRefunded  = "payments.refunded"
 
-	DispatchAssigned  = "dispatch.assigned"
-	DispatchPickedUp  = "dispatch.picked-up"
-	DispatchCompleted = "dispatch.completed"
-	DispatchLocation  = "dispatch.location" // keyed by agentId
+	DispatchAssigned      = "dispatch.assigned"
+	DispatchStopCompleted = "dispatch.stop-completed"
+	DispatchLocation      = "dispatch.location" // keyed by agentId
 )
 
 // AllTopics is what infra creates on startup and what the catch-all
@@ -39,7 +38,7 @@ var AllTopics = []string{
 	JobCreated, JobStatusChanged, JobCancelled,
 	MerchantAccepted, MerchantRejected, MerchantReady,
 	PaymentCompleted, PaymentFailed, PaymentRefunded,
-	DispatchAssigned, DispatchPickedUp, DispatchCompleted, DispatchLocation,
+	DispatchAssigned, DispatchStopCompleted, DispatchLocation,
 }
 
 // Envelope wraps every Kafka message.
@@ -76,22 +75,29 @@ func Decode[T any](env Envelope) (T, error) {
 	return v, nil
 }
 
-// Job statuses.
-const (
-	StatusCreated        = "CREATED"
-	StatusConfirmed      = "CONFIRMED"
-	StatusPreparing      = "PREPARING"
-	StatusReady          = "READY"
-	StatusOutForDelivery = "OUT_FOR_DELIVERY"
-	StatusDelivered      = "DELIVERED"
-	StatusCancelled      = "CANCELLED"
-)
+// Job states are the pack's own names (packs/<name>/lifecycle.yaml); what
+// consumers react to is the milestone, pkg/lifecycle.Created and friends.
 
 // Location is a WGS84 point with an optional human-readable label.
 type Location struct {
 	Lat   float64 `json:"lat"`
 	Lng   float64 `json:"lng"`
 	Label string  `json:"label,omitempty"`
+}
+
+// Stop kinds.
+const (
+	StopPickup  = "pickup"
+	StopDropoff = "dropoff"
+)
+
+// Stop is one place a job visits, in visiting order (Seq from 0). A food
+// job has two: pickup at the merchant, dropoff at the customer.
+type Stop struct {
+	Seq        int      `json:"seq"`
+	Kind       string   `json:"kind"`
+	Location   Location `json:"location"`
+	MerchantID string   `json:"merchantId,omitempty"` // set when the stop is at a merchant
 }
 
 type JobLine struct {
@@ -103,34 +109,42 @@ type JobLine struct {
 
 type JobCreatedData struct {
 	JobID            string    `json:"jobId"`
+	Pack             string    `json:"pack"`
+	State            string    `json:"state"` // the pack's initial state
 	CustomerID       string    `json:"customerId"`
 	CustomerName     string    `json:"customerName"`
-	MerchantID       string    `json:"merchantId"`
-	MerchantName     string    `json:"merchantName"`
+	MerchantID       string    `json:"merchantId,omitempty"`
+	MerchantName     string    `json:"merchantName,omitempty"`
 	Items            []JobLine `json:"items"`
 	SubtotalCents    int64     `json:"subtotalCents"`
 	DeliveryFeeCents int64     `json:"deliveryFeeCents"`
 	SurgeMultiplier  float64   `json:"surgeMultiplier"`
 	TotalCents       int64     `json:"totalCents"`
 	PaymentMethod    string    `json:"paymentMethod"`
-	Pickup           Location  `json:"pickup"`
-	Dropoff          Location  `json:"dropoff"`
+	Stops            []Stop    `json:"stops"`
 }
 
+// JobStatusChangedData is one lifecycle step. From and To are the pack's
+// state names, for display; consumers decide on ToMilestone, which is empty
+// when the new state maps no milestone (food's PREPARING).
 type JobStatusChangedData struct {
-	JobID      string `json:"jobId"`
-	CustomerID string `json:"customerId"`
-	MerchantID string `json:"merchantId"`
-	AgentID    string `json:"agentId,omitempty"`
-	From       string `json:"from"`
-	To         string `json:"to"`
-	Reason     string `json:"reason,omitempty"`
+	JobID       string `json:"jobId"`
+	CustomerID  string `json:"customerId"`
+	MerchantID  string `json:"merchantId,omitempty"`
+	AgentID     string `json:"agentId,omitempty"`
+	From        string `json:"from"`
+	To          string `json:"to"`
+	ToMilestone string `json:"toMilestone,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	// Stops is set only on the step into ready_for_dispatch, so dispatch
+	// can route the job without keeping its own copy of every job.
+	Stops []Stop `json:"stops,omitempty"`
 }
 
 type JobCancelledData struct {
 	JobID      string    `json:"jobId"`
 	CustomerID string    `json:"customerId"`
-	MerchantID string    `json:"merchantId"`
+	MerchantID string    `json:"merchantId,omitempty"`
 	Items      []JobLine `json:"items"`
 	Reason     string    `json:"reason"`
 }
@@ -143,10 +157,8 @@ type MerchantDecisionData struct {
 }
 
 type MerchantReadyData struct {
-	JobID      string   `json:"jobId"`
-	MerchantID string   `json:"merchantId"`
-	Pickup     Location `json:"pickup"`
-	Dropoff    Location `json:"dropoff"`
+	JobID      string `json:"jobId"`
+	MerchantID string `json:"merchantId"`
 }
 
 type PaymentData struct {
@@ -165,11 +177,17 @@ type AssignedData struct {
 	AgentAt      Location `json:"agentAt"`
 }
 
-type AssignmentProgressData struct {
-	JobID           string `json:"jobId"`
-	AssignmentID    string `json:"assignmentId"`
-	AgentID         string `json:"agentId"`
-	DurationSeconds int64  `json:"durationSeconds,omitempty"`
+// StopCompletedData: the agent finished stop StopSeq of the job. The jobs
+// module owns the stops, so it works out whether that was the first pickup
+// or the last stop; dispatch only says which one.
+type StopCompletedData struct {
+	JobID        string `json:"jobId"`
+	AssignmentID string `json:"assignmentId"`
+	AgentID      string `json:"agentId"`
+	StopSeq      int    `json:"stopSeq"`
+	// DurationSeconds is assignment to this stop; reporting uses it on the
+	// last stop as the assignment time.
+	DurationSeconds int64 `json:"durationSeconds,omitempty"`
 }
 
 type AgentLocationData struct {
@@ -178,20 +196,4 @@ type AgentLocationData struct {
 	Lat        float64 `json:"lat"`
 	Lng        float64 `json:"lng"`
 	EtaMinutes int     `json:"etaMinutes,omitempty"`
-}
-
-type UserRegisteredData struct {
-	UserID string `json:"userId"`
-	Name   string `json:"name"`
-	Email  string `json:"email"`
-	Role   string `json:"role"`
-}
-
-type NotificationData struct {
-	ID        string `json:"id"`
-	Recipient string `json:"recipient"` // "user:<id>" or "merchant:<id>"
-	JobID     string `json:"jobId,omitempty"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	Channel   string `json:"channel"`
 }

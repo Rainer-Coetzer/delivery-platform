@@ -55,9 +55,7 @@ func (p *PendingAssignmentRetrier) tick(ctx context.Context) {
 	}
 	for _, pa := range pending {
 		err := p.Pool.WithTx(ctx, func(tx pgx.Tx) error {
-			pickup := events.Location{Lat: pa.PickupLat, Lng: pa.PickupLng}
-			dropoff := events.Location{Lat: pa.DropoffLat, Lng: pa.DropoffLng}
-			outcome, err := consumers.TryAssign(ctx, tx, pa.JobID, pa.MerchantID, pickup, dropoff)
+			outcome, err := consumers.TryAssign(ctx, tx, pa)
 			if err != nil {
 				return err
 			}

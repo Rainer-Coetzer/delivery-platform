@@ -8,6 +8,18 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 )
 
+// originalTransitions is the hardcoded state machine the food pack
+// replaced (Phase C), kept as the fixture it is checked against.
+var originalTransitions = map[string][]string{
+	"CREATED":          {"CONFIRMED", "CANCELLED"},
+	"CONFIRMED":        {"PREPARING", "CANCELLED"},
+	"PREPARING":        {"READY", "CANCELLED"},
+	"READY":            {"OUT_FOR_DELIVERY", "CANCELLED"},
+	"OUT_FOR_DELIVERY": {"DELIVERED", "CANCELLED"},
+	"DELIVERED":        {},
+	"CANCELLED":        {},
+}
+
 // The food pack must reproduce the original hardcoded state machine
 // exactly: same states, same edges. Role and event triggers only decide
 // *when* an edge fires; the set of possible moves may not change.
@@ -33,7 +45,7 @@ func TestFoodPackMatchesOriginalStateMachine(t *testing.T) {
 		return out
 	}
 	old := map[string]bool{}
-	for from, tos := range validTransitions {
+	for from, tos := range originalTransitions {
 		for _, to := range tos {
 			old[from+" -> "+to] = true
 		}
@@ -51,7 +63,7 @@ func TestFoodPackMatchesOriginalStateMachine(t *testing.T) {
 			t.Fatalf("edge sets differ:\nold:  %v\npack: %v", o, p)
 		}
 	}
-	if len(m.States) != len(validTransitions) {
-		t.Fatalf("pack has %d states, original had %d", len(m.States), len(validTransitions))
+	if len(m.States) != len(originalTransitions) {
+		t.Fatalf("pack has %d states, original had %d", len(m.States), len(originalTransitions))
 	}
 }

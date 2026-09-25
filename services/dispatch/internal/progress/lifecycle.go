@@ -1,4 +1,4 @@
-// Package lifecycle moves an assignment through ASSIGNED -> PICKED_UP ->
+// Package progress moves an assignment through ASSIGNED -> PICKED_UP ->
 // COMPLETED. It is the one place that does this, so the agent's app (via
 // internal/api) and the demo autopilot (via internal/sim) can't drift apart
 // on what a transition writes and publishes.
@@ -29,19 +29,14 @@ const (
 // agent. Callers treat it as a conflict, not a failure.
 var ErrWrongState = errors.New("assignment not in expected state")
 
-// topicFor maps the target status to the event announcing it.
-var topicFor = map[string]string{
-	StatusPickedUp:  events.DispatchPickedUp,
-	StatusCompleted: events.DispatchCompleted,
-}
-
 // Advance moves assignment id from `from` to `to` in one transaction: status
-// and timestamp, the agent back to AVAILABLE on completion, and the outbox
-// event. Returns store.ErrNotFound or ErrWrongState for the caller to map.
+// and timestamp, the agent back to AVAILABLE on completion, and a
+// dispatch.stop-completed for the stop just finished (the pickup for
+// PICKED_UP, the dropoff for COMPLETED). Returns store.ErrNotFound or
+// ErrWrongState for the caller to map.
 func Advance(ctx context.Context, pool *db.Pool, id, from, to string) error {
-	topic, ok := topicFor[to]
-	if !ok {
-		return fmt.Errorf("lifecycle: no event defined for target status %q", to)
+	if to != StatusPickedUp && to != StatusCompleted {
+		return fmt.Errorf("progress: %q is not a stop being completed", to)
 	}
 	return pool.WithTx(ctx, func(tx pgx.Tx) error {
 		d, err := store.GetForUpdate(ctx, tx, id)
@@ -56,8 +51,9 @@ func Advance(ctx context.Context, pool *db.Pool, id, from, to string) error {
 			return err
 		}
 
-		data := events.AssignmentProgressData{JobID: d.JobID, AssignmentID: d.ID, AgentID: d.AgentID}
+		data := events.StopCompletedData{JobID: d.JobID, AssignmentID: d.ID, AgentID: d.AgentID, StopSeq: d.PickupSeq}
 		if to == StatusCompleted {
+			data.StopSeq = d.DropoffSeq
 			if err := store.MarkAgentAvailable(ctx, tx, d.AgentID); err != nil {
 				return err
 			}
@@ -66,7 +62,7 @@ func Advance(ctx context.Context, pool *db.Pool, id, from, to string) error {
 			data.DurationSeconds = elapsed
 		}
 
-		env, err := events.New(topic, d.JobID, data)
+		env, err := events.New(events.DispatchStopCompleted, d.JobID, data)
 		if err != nil {
 			return err
 		}

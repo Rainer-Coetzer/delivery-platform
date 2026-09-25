@@ -21,8 +21,7 @@ payments.completed
 payments.failed
 payments.refunded
 dispatch.assigned
-dispatch.picked-up
-dispatch.completed
+dispatch.stop-completed
 dispatch.location
 "
 

@@ -57,18 +57,21 @@ func TestUpgradeFromPreRenameSchemas(t *testing.T) {
 		},
 		{
 			def: jobs.Definition, oldSchema: "orders", before: 2,
-			seed: `INSERT INTO orders (id, customer_id, customer_name, restaurant_id, restaurant_name, restaurant_accepted, subtotal_cents,
-			         delivery_fee_cents, total_cents, payment_method, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, driver_id)
-			         VALUES ('j1', 'c1', 'C', 'm1', 'Kapana', true, 100, 10, 110, 'card', 0, 0, 0, 0, 'a1');
+			// An order already on the road: its pickup is done, its dropoff isn't.
+			seed: `INSERT INTO orders (id, customer_id, customer_name, restaurant_id, restaurant_name, status, paid, restaurant_accepted, subtotal_cents,
+			         delivery_fee_cents, total_cents, payment_method, pickup_lat, pickup_lng, pickup_label, dropoff_lat, dropoff_lng, driver_id)
+			         VALUES ('j1', 'c1', 'C', 'm1', 'Kapana', 'OUT_FOR_DELIVERY', true, true, 100, 10, 110, 'card', -22.5, 17.0, 'Kapana', -22.6, 17.1, 'a1');
 			       INSERT INTO order_items (order_id, menu_item_id, name, quantity, unit_price_cents) VALUES ('j1', 'i1', 'Platter', 1, 100);
 			       INSERT INTO order_status_history (order_id, from_status, to_status) VALUES ('j1', 'CREATED', 'CONFIRMED');`,
 			// The second job line proves the renamed sequence still feeds the id default.
 			check: `INSERT INTO job_lines (job_id, catalogue_item_id, name, quantity, unit_price_cents) VALUES ('j1', 'i2', 'Chips', 1, 10);
-			        SELECT merchant_id || '|' || agent_id || '|' || merchant_accepted::text || '|' ||
+			        SELECT merchant_id || '|' || agent_id || '|' || pack || '|' || milestone || '|' || (facts ->> 'paid') || (facts ->> 'merchant_accepted') || '|' ||
 			               (SELECT string_agg(catalogue_item_id, ',' ORDER BY id) FROM job_lines WHERE job_id = 'j1') || '|' ||
-			               (SELECT to_status FROM job_events WHERE job_id = 'j1')
+			               (SELECT to_status FROM job_events WHERE job_id = 'j1') || '|' ||
+			               (SELECT string_agg(seq || kind || lat || coalesce(label, '-') || coalesce(merchant_id, '-') || (completed_at IS NOT NULL), ',' ORDER BY seq)
+			                FROM job_stops WHERE job_id = 'j1')
 			        FROM jobs WHERE id = 'j1'`,
-			want: "m1|a1|true|i1,i2|CONFIRMED",
+			want: "m1|a1|food|in_transit|truetrue|i1,i2|CONFIRMED|0pickup-22.5Kapanam1true,1dropoff-22.6--false",
 		},
 		{
 			def: payment.Definition, oldSchema: "", before: 2,

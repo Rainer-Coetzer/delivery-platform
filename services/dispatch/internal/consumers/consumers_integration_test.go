@@ -4,6 +4,7 @@ package consumers
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"testing"
@@ -13,7 +14,9 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/db/dbtest"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/migrations"
+	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/progress"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/store"
 )
 
@@ -50,9 +53,16 @@ func envelope(t *testing.T, topic, jobID string, data any) events.Envelope {
 	return env
 }
 
+// ready is the jobs module announcing the step into ready_for_dispatch.
+// Stop numbers 3 and 5 (not 0 and 1) prove dispatch reports back the
+// job's own numbering rather than assuming a two-stop job.
 func ready(t *testing.T, jobID string) events.Envelope {
-	return envelope(t, events.MerchantReady, jobID, events.MerchantReadyData{
-		JobID: jobID, MerchantID: "r1", Pickup: pickup, Dropoff: dropoff,
+	return envelope(t, events.JobStatusChanged, jobID, events.JobStatusChangedData{
+		JobID: jobID, MerchantID: "r1", From: "PREPARING", To: "READY", ToMilestone: lifecycle.ReadyForDispatch,
+		Stops: []events.Stop{
+			{Seq: 3, Kind: events.StopPickup, Location: pickup, MerchantID: "r1"},
+			{Seq: 5, Kind: events.StopDropoff, Location: dropoff},
+		},
 	})
 }
 
@@ -150,5 +160,67 @@ func TestCancelWhilePending_DeletesPendingRow(t *testing.T) {
 	}
 	if n := pendingCount(t, st); n != 0 {
 		t.Fatalf("pending assignments after cancel = %d, want 0", n)
+	}
+}
+
+func TestOnlyReadyForDispatchAssigns(t *testing.T) {
+	h, _, st := setup(t)
+	ctx := context.Background()
+	availableAgent(t, st)
+	jobID := uuid.NewString()
+	other := envelope(t, events.JobStatusChanged, jobID, events.JobStatusChangedData{
+		JobID: jobID, From: "CREATED", To: "CONFIRMED", ToMilestone: lifecycle.Confirmed,
+	})
+	if err := h.Handle(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetByJob(ctx, jobID); err != store.ErrNotFound {
+		t.Fatalf("a confirmed job must not be dispatched, got err=%v", err)
+	}
+}
+
+// Picking up and completing report the job's stop numbers back, which is
+// what moves the job along in the jobs module.
+func TestProgressReportsStopSeqs(t *testing.T) {
+	h, pool, st := setup(t)
+	ctx := context.Background()
+	availableAgent(t, st)
+	jobID := uuid.NewString()
+	if err := h.Handle(ctx, ready(t, jobID)); err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.GetByJob(ctx, jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := progress.Advance(ctx, pool, a.ID, progress.StatusAssigned, progress.StatusPickedUp); err != nil {
+		t.Fatal(err)
+	}
+	if err := progress.Advance(ctx, pool, a.ID, progress.StatusPickedUp, progress.StatusCompleted); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := pool.Query(ctx, `SELECT payload FROM outbox WHERE event_type = $1 ORDER BY id`, events.DispatchStopCompleted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var seqs []int
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		var env events.Envelope
+		if err := json.Unmarshal(raw, &env); err != nil {
+			t.Fatal(err)
+		}
+		d, err := events.Decode[events.StopCompletedData](env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seqs = append(seqs, d.StopSeq)
+	}
+	if len(seqs) != 2 || seqs[0] != 3 || seqs[1] != 5 {
+		t.Fatalf("stop-completed seqs = %v, want [3 5]", seqs)
 	}
 }

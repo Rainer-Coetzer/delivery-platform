@@ -10,8 +10,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	packfs "github.com/rainercoetzer/delivery-platform/packs"
 	"github.com/rainercoetzer/delivery-platform/pkg/auth"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
+	"github.com/rainercoetzer/delivery-platform/pkg/packs"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/domain"
 )
 
@@ -75,10 +78,11 @@ func TestRouteRoles(t *testing.T) {
 		{"merchant lists a customer's jobs", merchant, "GET", "/jobs?customerId=u1", "", 403},
 		{"agent lists a merchant's jobs", agent, "GET", "/jobs?merchantId=r1", "", 403},
 		{"customer job without merchant", customer, "POST", "/jobs", `{"paymentMethod":"cash"}`, 400},
+		{"transition without a target", customer, "POST", "/jobs/o1/transitions", `{}`, 400},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			a := &API{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: as(c.claims)}
+			a := &API{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: as(c.claims), Pack: foodPack(t)}
 			r := chi.NewRouter()
 			a.Routes(r)
 			rec := httptest.NewRecorder()
@@ -107,4 +111,13 @@ func TestValidDropoff(t *testing.T) {
 			t.Errorf("%s: validDropoff = %v, want %v", c.name, got, c.want)
 		}
 	}
+}
+
+func foodPack(t *testing.T) *packs.Pack {
+	t.Helper()
+	p, err := packs.Load(packfs.FS, "food", lifecycle.Known{Events: events.AllTopics, Roles: []string{"customer", "merchant", "agent", "admin"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

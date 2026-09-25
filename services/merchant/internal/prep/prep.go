@@ -44,7 +44,7 @@ func MarkReady(ctx context.Context, pool *db.Pool, merchantID, jobID string) err
 			return err
 		}
 		env, err := events.New(events.MerchantReady, jobID, events.MerchantReadyData{
-			JobID: jobID, MerchantID: ro.MerchantID, Pickup: ro.Pickup, Dropoff: ro.Dropoff,
+			JobID: jobID, MerchantID: ro.MerchantID,
 		})
 		if err != nil {
 			return err

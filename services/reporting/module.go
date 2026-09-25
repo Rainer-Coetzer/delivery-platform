@@ -21,7 +21,7 @@ var Definition = app.Definition{
 			Routes: (&api.API{Store: store.New(d.Pool), Auth: d.Auth}).Routes,
 			Consumers: []app.Consumer{{
 				Group:   "reporting-service",
-				Topics:  []string{events.JobCreated, events.JobStatusChanged, events.JobCancelled, events.DispatchAssigned},
+				Topics:  []string{events.JobCreated, events.JobStatusChanged, events.DispatchAssigned},
 				Handler: h.Handle,
 			}},
 		}, nil

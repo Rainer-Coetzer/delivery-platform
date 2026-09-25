@@ -105,13 +105,6 @@ func build(env events.Envelope) (*store.Notification, error) {
 		}
 		return &store.Notification{Recipient: "job:" + d.JobID, JobID: d.JobID, Channel: "in-app",
 			Title: "Agent assigned", Body: fmt.Sprintf("%s is on the way, ETA %d min", d.AgentName, d.EtaMinutes)}, nil
-	case events.DispatchCompleted:
-		d, err := events.Decode[events.AssignmentProgressData](env)
-		if err != nil {
-			return nil, err
-		}
-		return &store.Notification{Recipient: "job:" + d.JobID, JobID: d.JobID, Channel: "in-app",
-			Title: "Delivered", Body: "Job " + short(d.JobID) + " has been delivered, enjoy!"}, nil
 	default:
 		return nil, nil
 	}

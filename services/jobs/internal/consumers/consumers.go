@@ -1,12 +1,16 @@
-// Package consumers applies incoming Kafka events to the Job aggregate:
-// merchant decisions, payment outcomes and delivery progress. Every
-// handler is idempotent (checked against processed_events in the same
-// transaction as the state change) so at-least-once delivery from Kafka
-// never double-applies an event.
+// Package consumers applies incoming events to jobs through the pack's
+// lifecycle: an event either sets a fact, triggers a transition, or both
+// (pkg/lifecycle decides). Two events carry data the lifecycle doesn't:
+// dispatch.assigned records the agent, and dispatch.stop-completed marks
+// the stop before it is run as a trigger. Every handler is idempotent
+// (processed_events in the same transaction as the state change), so
+// at-least-once delivery never applies an event twice.
 package consumers
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -14,76 +18,29 @@ import (
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/domain"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/store"
 )
 
 type Handlers struct {
-	Pool *db.Pool
-	Log  *slog.Logger
+	Pool      *db.Pool
+	Log       *slog.Logger
+	Lifecycle *lifecycle.Machine
 }
 
-// Handle dispatches env to the right handler by topic. Unknown topics are
-// logged and dropped rather than dead-lettered, since a service subscribing
-// to a superset of topics it cares about is normal.
-func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
-	switch env.EventType {
-	case events.MerchantAccepted:
-		return h.withJob(ctx, env, func(o *domain.Job) (string, error) {
-			o.MerchantAccepted = true
-			return "", nil
-		})
-	case events.MerchantRejected:
-		data, err := events.Decode[events.MerchantDecisionData](env)
-		if err != nil {
-			return err
-		}
-		return h.cancel(ctx, env, data.Reason)
-	case events.MerchantReady:
-		return h.withJob(ctx, env, func(o *domain.Job) (string, error) {
-			return o.Transition(events.StatusReady, "")
-		})
-	case events.PaymentCompleted:
-		return h.withJob(ctx, env, func(o *domain.Job) (string, error) {
-			o.Paid = true
-			return "", nil
-		})
-	case events.PaymentFailed:
-		data, err := events.Decode[events.PaymentData](env)
-		if err != nil {
-			return err
-		}
-		return h.cancel(ctx, env, data.Reason)
-	case events.DispatchAssigned:
-		data, err := events.Decode[events.AssignedData](env)
-		if err != nil {
-			return err
-		}
-		return h.withJob(ctx, env, func(o *domain.Job) (string, error) {
-			o.AgentID = data.AgentID
-			return "", nil
-		})
-	case events.DispatchPickedUp:
-		return h.withJob(ctx, env, func(o *domain.Job) (string, error) {
-			return o.Transition(events.StatusOutForDelivery, "")
-		})
-	case events.DispatchCompleted:
-		return h.withJob(ctx, env, func(o *domain.Job) (string, error) {
-			return o.Transition(events.StatusDelivered, "")
-		})
-	default:
-		h.Log.Debug("ignoring unhandled topic", "topic", env.EventType)
-		return nil
+// Topics is what the lifecycle reacts to, plus dispatch.assigned. A pack
+// that never mentions an event doesn't get it delivered.
+func (h *Handlers) Topics() []string {
+	topics := h.Lifecycle.Events()
+	if !h.Lifecycle.Reacts(events.DispatchAssigned) {
+		topics = append(topics, events.DispatchAssigned)
 	}
+	return topics
 }
 
-// withJob loads the job for update, applies mutate, persists any status
-// change plus flag changes, tries MaybeConfirm, and inserts the resulting
-// outbox events — all inside one transaction guarded by the idempotency
-// check. mutate may change flags without transitioning (return "" as the
-// "from" status) or perform its own explicit Transition.
-func (h *Handlers) withJob(ctx context.Context, env events.Envelope, mutate func(o *domain.Job) (from string, err error)) error {
+func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 	return h.Pool.WithTx(ctx, func(tx pgx.Tx) error {
 		isNew, err := db.InsertIfNew(ctx, tx, env.EventID, env.EventType)
 		if err != nil {
@@ -93,102 +50,105 @@ func (h *Handlers) withJob(ctx context.Context, env events.Envelope, mutate func
 			h.Log.Info("duplicate event skipped", "eventId", env.EventID, "topic", env.EventType)
 			return nil
 		}
-
-		jobID := jobIDFor(env)
-		o, err := store.GetForUpdate(ctx, tx, jobID)
+		j, err := store.GetForUpdate(ctx, tx, env.JobID)
 		if err != nil {
-			return fmt.Errorf("load job %s: %w", jobID, err)
+			return fmt.Errorf("load job %s for %s: %w", env.JobID, env.EventType, err)
 		}
 
-		explicitFrom, err := mutate(o)
-		if err != nil {
-			return fmt.Errorf("apply event %s to job %s: %w", env.EventType, jobID, err)
+		trigger := lifecycle.Trigger{Event: env.EventType}
+		switch env.EventType {
+		case events.DispatchAssigned:
+			data, err := events.Decode[events.AssignedData](env)
+			if err != nil {
+				return err
+			}
+			j.AgentID = data.AgentID
+		case events.DispatchStopCompleted:
+			data, err := events.Decode[events.StopCompletedData](env)
+			if err != nil {
+				return err
+			}
+			if trigger.Stop, err = j.CompleteStop(data.StopSeq, env.Timestamp); err != nil {
+				return err
+			}
+			if err := store.MarkStopCompleted(ctx, tx, j.ID, data.StopSeq, env.Timestamp); err != nil {
+				return err
+			}
 		}
 
-		if explicitFrom != "" {
-			if err := store.ApplyTransition(ctx, tx, o, explicitFrom); err != nil {
-				return err
+		var steps []lifecycle.Step
+		if h.Lifecycle.Reacts(env.EventType) {
+			steps, err = j.Apply(h.Lifecycle, trigger, reasonOf(env))
+			if errors.Is(err, lifecycle.ErrNoTransition) && j.Terminal() {
+				// A late event for a finished job (a payment landing after
+				// a rejection cancelled it) is a normal race, not a fault.
+				h.Log.Warn("event ignored: job already finished", "jobId", j.ID, "status", j.Status, "topic", env.EventType)
+				return store.Save(ctx, tx, j, nil)
 			}
-			if err := insertStatusChanged(ctx, tx, o, explicitFrom); err != nil {
-				return err
+			if err != nil {
+				// On a live job this means the pack's lifecycle and the event
+				// flow disagree. Fail so it retries and then dead-letters
+				// where an operator will see it.
+				return fmt.Errorf("apply %s to job %s: %w", env.EventType, j.ID, err)
 			}
-		} else if err := store.UpdateFlags(ctx, tx, o); err != nil {
+		}
+		if err := store.Save(ctx, tx, j, steps); err != nil {
 			return err
 		}
-
-		confirmed, from, err := o.MaybeConfirm()
-		if err != nil {
-			return fmt.Errorf("auto-confirm job %s: %w", jobID, err)
-		}
-		if confirmed {
-			if err := store.ApplyTransition(ctx, tx, o, from); err != nil {
-				return err
-			}
-			if err := insertStatusChanged(ctx, tx, o, from); err != nil {
-				return err
-			}
-		}
-		return nil
+		return PublishSteps(ctx, tx, j, steps)
 	})
 }
 
-// cancel transitions the job to CANCELLED and emits both
-// jobs.status-changed and jobs.cancelled — the latter carries the line
-// items so the merchant can release stock and payment can issue a refund.
-func (h *Handlers) cancel(ctx context.Context, env events.Envelope, reason string) error {
-	return h.Pool.WithTx(ctx, func(tx pgx.Tx) error {
-		isNew, err := db.InsertIfNew(ctx, tx, env.EventID, env.EventType)
+// PublishSteps writes one jobs.status-changed per step, plus jobs.cancelled
+// if the job reached the cancelled milestone. The api package uses it too
+// (role triggers, settling on creation).
+func PublishSteps(ctx context.Context, tx pgx.Tx, j *domain.Job, steps []lifecycle.Step) error {
+	for _, s := range steps {
+		data := events.JobStatusChangedData{
+			JobID: j.ID, CustomerID: j.CustomerID, MerchantID: j.MerchantID, AgentID: j.AgentID,
+			From: s.From, To: s.To, ToMilestone: s.Milestone,
+		}
+		if s.Milestone == lifecycle.Cancelled {
+			data.Reason = j.CancelReason
+		}
+		if s.Milestone == lifecycle.ReadyForDispatch {
+			data.Stops = j.EventStops()
+		}
+		env, err := events.New(events.JobStatusChanged, j.ID, data)
 		if err != nil {
 			return err
 		}
-		if !isNew {
-			return nil
-		}
-
-		jobID := jobIDFor(env)
-		o, err := store.GetForUpdate(ctx, tx, jobID)
-		if err != nil {
-			return fmt.Errorf("load job %s: %w", jobID, err)
-		}
-		from, err := o.Transition(events.StatusCancelled, reason)
-		if err != nil {
-			// Already terminal (e.g. two failure events racing) — safe to ignore.
-			h.Log.Warn("cancel ignored", "jobId", jobID, "status", o.Status, "error", err)
-			return nil
-		}
-		if err := store.ApplyTransition(ctx, tx, o, from); err != nil {
+		if err := outbox.Insert(ctx, tx, env); err != nil {
 			return err
 		}
-		if err := insertStatusChanged(ctx, tx, o, from); err != nil {
-			return err
+		if s.Milestone != lifecycle.Cancelled {
+			continue
 		}
-
-		var items []events.JobLine
-		for _, it := range o.Items {
-			items = append(items, events.JobLine{CatalogueItemID: it.CatalogueItemID, Name: it.Name, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents})
+		// jobs.cancelled carries the lines so the merchant can release
+		// stock, and is what payment refunds on.
+		lines := make([]events.JobLine, 0, len(j.Items))
+		for _, it := range j.Items {
+			lines = append(lines, events.JobLine{CatalogueItemID: it.CatalogueItemID, Name: it.Name, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents})
 		}
-		cancelledEnv, err := events.New(events.JobCancelled, o.ID, events.JobCancelledData{
-			JobID: o.ID, CustomerID: o.CustomerID, MerchantID: o.MerchantID, Items: items, Reason: reason,
+		cancelled, err := events.New(events.JobCancelled, j.ID, events.JobCancelledData{
+			JobID: j.ID, CustomerID: j.CustomerID, MerchantID: j.MerchantID, Items: lines, Reason: j.CancelReason,
 		})
 		if err != nil {
 			return err
 		}
-		return outbox.Insert(ctx, tx, cancelledEnv)
-	})
-}
-
-func insertStatusChanged(ctx context.Context, tx pgx.Tx, o *domain.Job, from string) error {
-	env, err := events.New(events.JobStatusChanged, o.ID, events.JobStatusChangedData{
-		JobID: o.ID, CustomerID: o.CustomerID, MerchantID: o.MerchantID, AgentID: o.AgentID,
-		From: from, To: o.Status, Reason: o.CancelReason,
-	})
-	if err != nil {
-		return err
+		if err := outbox.Insert(ctx, tx, cancelled); err != nil {
+			return err
+		}
 	}
-	return outbox.Insert(ctx, tx, env)
+	return nil
 }
 
-// jobIDFor reads the jobId every consumed event carries either at the
-// envelope level or inside its data payload; the envelope's JobID is
-// always set for job-scoped topics by the producers in this project.
-func jobIDFor(env events.Envelope) string { return env.JobID }
+// reasonOf reads the optional "reason" every failure event carries
+// (payments.failed, merchant.job-rejected), for the cancel reason.
+func reasonOf(env events.Envelope) string {
+	var v struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.Unmarshal(env.Data, &v) // no reason is a fine answer
+	return v.Reason
+}

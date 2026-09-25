@@ -71,6 +71,7 @@ transitions:
 `, "cycle"},
 		{"completed not terminal", strings.Replace(minimal, "milestone: completed, terminal: true", "milestone: completed", 1) + "  - { from: DONE, to: GONE, by: [admin] }\n", "maps completed but isn't terminal"},
 		{"milestone mapped twice", strings.Replace(minimal, "{ name: GONE, milestone: cancelled", "{ name: GONE, milestone: completed", 1), "mapped by both"},
+		{"initial off the created milestone", strings.Replace(strings.Replace(minimal, "initial: NEW", "initial: PRE", 1), "states:\n", "states:\n  - { name: PRE }\n", 1) + "  - { from: PRE, to: NEW, auto: true }\n", "must map milestone created"},
 		{"stop filter without event", strings.Replace(minimal, "by: [admin] }", "by: [admin], stop: last_stop }", 1), "stop filter only applies"},
 	}
 	for _, c := range cases {
@@ -197,5 +198,22 @@ transitions:
 	steps, facts, err := m.SetFact("NEW", nil, "approved", "merchant")
 	if err != nil || len(steps) != 1 || steps[0].To != "APPROVED" || !facts["approved"] {
 		t.Fatalf("merchant approval should unlock the auto step: %+v %v %v", steps, facts, err)
+	}
+}
+
+func TestSettleEventsReacts(t *testing.T) {
+	m := loadFood(t)
+	if steps := m.Settle("CREATED", map[string]bool{"paid": true, "merchant_accepted": true}); len(steps) != 2 || steps[1].To != "PREPARING" {
+		t.Fatalf("both facts in: CREATED should settle through CONFIRMED to PREPARING, got %+v", steps)
+	}
+	if steps := m.Settle("CREATED", nil); len(steps) != 0 {
+		t.Fatalf("no facts: nothing to settle, got %+v", steps)
+	}
+	want := "dispatch.stop-completed,merchant.job-accepted,merchant.job-ready,merchant.job-rejected,payments.completed,payments.failed"
+	if got := strings.Join(m.Events(), ","); got != want {
+		t.Fatalf("Events() = %s, want %s", got, want)
+	}
+	if !m.Reacts("payments.completed") || m.Reacts("dispatch.assigned") {
+		t.Fatal("Reacts should follow Events")
 	}
 }

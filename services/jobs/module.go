@@ -1,10 +1,9 @@
 // Package jobs is the jobs module: job creation (priced from the
-// merchant catalogue) and the job state machine.
+// merchant catalogue) and running each job through the pack's lifecycle.
 package jobs
 
 import (
 	"github.com/rainercoetzer/delivery-platform/pkg/app"
-	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/api"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/catalogue"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/consumers"
@@ -20,22 +19,14 @@ var Definition = app.Definition{
 }
 
 func newModule(d app.Deps) (*app.Module, error) {
-	h := &consumers.Handlers{Pool: d.Pool, Log: d.Log}
+	h := &consumers.Handlers{Pool: d.Pool, Log: d.Log, Lifecycle: d.Pack.Lifecycle}
 	a := &api.API{
-		Pool: d.Pool, Store: store.New(d.Pool), Log: d.Log, Auth: d.Auth,
+		Pool: d.Pool, Store: store.New(d.Pool), Log: d.Log, Auth: d.Auth, Pack: d.Pack,
 		Catalogue: catalogue.New(d.URL("merchant"), d.HTTP),
 	}
 	return &app.Module{
-		Routes: a.Routes,
-		Outbox: true,
-		Consumers: []app.Consumer{{
-			Group: "jobs-service",
-			Topics: []string{
-				events.MerchantAccepted, events.MerchantRejected, events.MerchantReady,
-				events.PaymentCompleted, events.PaymentFailed,
-				events.DispatchAssigned, events.DispatchPickedUp, events.DispatchCompleted,
-			},
-			Handler: h.Handle,
-		}},
+		Routes:    a.Routes,
+		Outbox:    true,
+		Consumers: []app.Consumer{{Group: "jobs-service", Topics: h.Topics(), Handler: h.Handle}},
 	}, nil
 }

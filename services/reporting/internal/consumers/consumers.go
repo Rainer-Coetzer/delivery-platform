@@ -11,6 +11,7 @@ import (
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/services/reporting/internal/store"
 )
 
@@ -36,19 +37,11 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 		}
 		return h.withDedup(ctx, env, func(tx pgx.Tx) error {
 			var completedAt *time.Time
-			if data.To == events.StatusDelivered {
+			if data.ToMilestone == lifecycle.Completed {
 				t := env.Timestamp
 				completedAt = &t
 			}
 			return store.UpdateStatus(ctx, tx, data.JobID, data.To, completedAt)
-		})
-	case events.JobCancelled:
-		data, err := events.Decode[events.JobCancelledData](env)
-		if err != nil {
-			return err
-		}
-		return h.withDedup(ctx, env, func(tx pgx.Tx) error {
-			return store.UpdateStatus(ctx, tx, data.JobID, events.StatusCancelled, nil)
 		})
 	case events.DispatchAssigned:
 		data, err := events.Decode[events.AssignedData](env)

@@ -38,7 +38,7 @@ func newModule(d app.Deps) (*app.Module, error) {
 		Routes: a.Routes,
 		Consumers: []app.Consumer{{
 			Group:   "identity-service",
-			Topics:  []string{events.JobCreated, events.JobStatusChanged, events.JobCancelled},
+			Topics:  []string{events.JobCreated, events.JobStatusChanged},
 			Handler: h.Handle,
 		}},
 	}, nil

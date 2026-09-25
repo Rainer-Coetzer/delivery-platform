@@ -28,15 +28,19 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	packfs "github.com/rainercoetzer/delivery-platform/packs"
 	"github.com/rainercoetzer/delivery-platform/pkg/auth"
 	"github.com/rainercoetzer/delivery-platform/pkg/config"
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
+	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/events/bus"
 	"github.com/rainercoetzer/delivery-platform/pkg/events/bus/inprocess"
 	"github.com/rainercoetzer/delivery-platform/pkg/events/bus/kafkabus"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
+	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/pkg/obs"
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
+	"github.com/rainercoetzer/delivery-platform/pkg/packs"
 )
 
 // Definition is how a module describes itself to Run.
@@ -89,6 +93,8 @@ type Deps struct {
 	// Embedded is true inside cmd/platform, where every module shares one
 	// router (the gateway doesn't proxy there).
 	Embedded bool
+	// Pack is the vertical pack this install runs (PACK), already validated.
+	Pack *packs.Pack
 }
 
 // Options for Run.
@@ -127,6 +133,11 @@ func run(log *slog.Logger, opts Options) error {
 		return err
 	}
 	issuer := auth.NewIssuer(secret, 24*time.Hour)
+	pack, err := LoadPack()
+	if err != nil {
+		return err
+	}
+	log.Info("pack loaded", "pack", pack.Name, "modules", pack.Modules)
 	needsDB := false
 	for _, d := range opts.Definitions {
 		needsDB = needsDB || d.Migrations != nil
@@ -184,7 +195,7 @@ func run(log *slog.Logger, opts Options) error {
 	defer cancelRun()
 
 	for _, def := range opts.Definitions {
-		deps := Deps{Log: log.With("module", def.Name), Bus: b, Issuer: issuer, Auth: issuer.Middleware, HTTP: httpClient, URL: urlFor, Embedded: opts.Embedded}
+		deps := Deps{Log: log.With("module", def.Name), Bus: b, Issuer: issuer, Auth: issuer.Middleware, HTTP: httpClient, URL: urlFor, Embedded: opts.Embedded, Pack: pack}
 		if def.Migrations != nil {
 			pool, err := openModuleDB(ctx, dsn, def, opts.Embedded)
 			if err != nil {
@@ -248,6 +259,23 @@ func run(log *slog.Logger, opts Options) error {
 		_ = srv.Shutdown(shutdownCtx)
 	}
 	return nil
+}
+
+// LoadPack loads the pack named by PACK (default food): from PACKS_DIR
+// when set, otherwise from the packs embedded in the binary. In the `full`
+// profile every service must be given the same PACK; they each load it.
+func LoadPack() (*packs.Pack, error) {
+	name := config.String("PACK", "food")
+	var fsys fs.FS = packfs.FS
+	if dir := os.Getenv("PACKS_DIR"); dir != "" {
+		fsys = os.DirFS(dir)
+	}
+	roles := []string{string(auth.RoleCustomer), string(auth.RoleMerchant), string(auth.RoleAgent), string(auth.RoleAdmin)}
+	p, err := packs.Load(fsys, name, lifecycle.Known{Events: events.AllTopics, Roles: roles})
+	if err != nil {
+		return nil, fmt.Errorf("PACK=%s: %w", name, err)
+	}
+	return p, nil
 }
 
 func newBus(ctx context.Context, kind, dsn string, log *slog.Logger) (bus.Bus, error) {

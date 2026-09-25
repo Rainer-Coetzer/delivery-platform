@@ -32,7 +32,7 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 			}
 			return store.UpsertJobCreated(ctx, tx, &store.JobHistoryEntry{
 				JobID: data.JobID, CustomerID: data.CustomerID, MerchantName: data.MerchantName,
-				Status: "CREATED", TotalCents: data.TotalCents,
+				Status: data.State, TotalCents: data.TotalCents,
 			}, env.Timestamp)
 		})
 	case events.JobStatusChanged:
@@ -46,18 +46,6 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 				return err
 			}
 			return store.UpdateJobStatus(ctx, tx, data.JobID, data.To)
-		})
-	case events.JobCancelled:
-		return h.Pool.WithTx(ctx, func(tx pgx.Tx) error {
-			isNew, err := db.InsertIfNew(ctx, tx, env.EventID, env.EventType)
-			if err != nil || !isNew {
-				return err
-			}
-			data, err := events.Decode[events.JobCancelledData](env)
-			if err != nil {
-				return err
-			}
-			return store.UpdateJobStatus(ctx, tx, data.JobID, events.StatusCancelled)
 		})
 	default:
 		return nil
