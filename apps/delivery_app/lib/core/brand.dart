@@ -42,6 +42,24 @@ class Currency {
     }
     return neg ? '-$out' : out;
   }
+
+  /// What someone typed as a price ("65", "65.5", "65,50") in minor units,
+  /// or null if it isn't one: more decimals than the currency has, a sign,
+  /// or anything but digits. Parsed as text, never through a double, so
+  /// 0.29 can't come out as 28 minor units. Either separator is accepted
+  /// because half the locales write a decimal comma.
+  int? parse(String input) {
+    final m = RegExp(r'^(\d+)(?:[.,](\d*))?$').firstMatch(input.trim());
+    if (m == null) return null;
+    final fraction = m.group(2) ?? '';
+    if (fraction.length > minorUnits) return null;
+    final whole = int.parse(m.group(1)!);
+    final minor = fraction.isEmpty ? 0 : int.parse(fraction.padRight(minorUnits, '0'));
+    return whole * math.pow(10, minorUnits).toInt() + minor;
+  }
+
+  /// An example price to show in a hint: "12.50", or "12" without minor units.
+  String get example => minorUnits == 0 ? '12' : '12.${'5'.padRight(minorUnits, '0')}';
 }
 
 class MapSettings {

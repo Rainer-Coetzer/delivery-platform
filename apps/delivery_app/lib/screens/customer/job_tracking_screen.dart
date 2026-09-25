@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart' as ll;
 import '../../core/config.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
+import '../../l10n/app_localizations.dart';
 
 /// Shows a job's state as it changes and, once an agent is assigned, their
 /// live position, both over the gateway's WebSocket
@@ -46,9 +47,10 @@ class _JobTrackingScreenState extends ConsumerState<JobTrackingScreen> {
       next.whenData(_handleEvent);
     });
     final cancelled = _status != null && config.milestoneOf(_status!) == 'cancelled';
+    final l10n = AppLocalizations.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: Text('${config.title('job')} #${widget.jobId.substring(0, 8)}')),
+      appBar: AppBar(title: Text(l10n.jobNumber(config.title('job'), widget.jobId.substring(0, 8)))),
       body: Column(
         children: [
           Padding(
@@ -58,16 +60,14 @@ class _JobTrackingScreenState extends ConsumerState<JobTrackingScreen> {
           if (_etaMinutes != null && !cancelled)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Text('${config.title('agent')} arrives in about $_etaMinutes min', style: Theme.of(context).textTheme.titleMedium),
+              child: Text(l10n.agentArrivesIn(config.title('agent'), _etaMinutes!), style: Theme.of(context).textTheme.titleMedium),
             ),
           Expanded(
             child: _agentAt == null
                 ? Center(
                     child: _job == null
                         ? const CircularProgressIndicator()
-                        : Text(cancelled
-                            ? 'This ${config.term('job')} was cancelled.'
-                            : 'Waiting for a ${config.term('agent')}...'),
+                        : Text(cancelled ? l10n.jobCancelled(config.term('job')) : l10n.waitingForAgent(config.term('agent'))),
                   )
                 : FlutterMap(
                     options: MapOptions(
@@ -144,7 +144,7 @@ class _Progress extends StatelessWidget {
         final scheme = Theme.of(context).colorScheme;
         return Expanded(
           child: Semantics(
-            label: '${steps[i].label}${reached ? ', done' : ''}',
+            label: reached ? AppLocalizations.of(context).stepDone(steps[i].label) : steps[i].label,
             child: Column(
               children: [
                 CircleAvatar(

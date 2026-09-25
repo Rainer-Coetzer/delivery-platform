@@ -46,6 +46,28 @@ edit needs a restart, not a rebuild).
 | `overrides.terminology` | no | per locale, words that replace the pack's (`agent: rider`) |
 | `overrides.settings` | no | module settings that replace the pack's, a whole module block at a time; checked by the same rules as the pack's own |
 
+## Languages
+
+The app asks for `GET /config` in the device's language. The server
+answers in it if `locales.supported` has it, otherwise in
+`locales.default`, and says which. The app then shows its own words in
+that same language, so the pack's nouns and the app's sentences never
+mix two languages.
+
+The app ships English and Afrikaans, and so do the shipped packs. To add
+a language, for example `de`:
+
+1. Add `apps/delivery_app/lib/l10n/app_de.arb` with every message in
+   `app_en.arb`. `flutter test` fails if one is missing or drops a
+   placeholder.
+2. Add a `de:` block to your pack's `terminology` (nouns and state
+   labels), or to `overrides.terminology` for the words you want to
+   change. A word left out falls back to English.
+3. Add `de` to `locales.supported`.
+
+Some things stay in one language for now: `name` and `tagline` in this
+file, and messages the server writes (API errors, notifications).
+
 ## How the app uses your colours
 
 Only `colours.primary` is required. The app builds a Material 3 palette

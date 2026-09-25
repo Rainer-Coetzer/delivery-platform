@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import 'core/brand.dart';
 import 'core/config.dart';
+import 'l10n/app_localizations.dart';
 import 'providers/providers.dart';
 import 'screens/admin/admin_dashboard_screen.dart';
 import 'screens/agent/agent_home_screen.dart';
@@ -30,6 +31,10 @@ class DeliveryApp extends ConsumerWidget {
     // spinner and the error before that use Material's neutral theme:
     // there is no brand yet to use.
     final theme = ThemeData(useMaterial3: true);
+    // The app's strings (lib/l10n). Before the config is in, Flutter picks
+    // from the device's language; after, the server's choice decides.
+    const delegates = AppLocalizations.localizationsDelegates;
+    const locales = AppLocalizations.supportedLocales;
     return ref.watch(configProvider).when(
           data: (config) {
             // Rebuilding GoRouter on every auth change is a simplification:
@@ -40,6 +45,9 @@ class DeliveryApp extends ConsumerWidget {
             return MaterialApp.router(
               title: config.brand.name,
               theme: buildTheme(config.brand),
+              locale: Locale(config.locale),
+              localizationsDelegates: delegates,
+              supportedLocales: locales,
               // No animation from the neutral loading theme to the brand's:
               // it would flash Material purple into the brand's colours on
               // every start.
@@ -47,21 +55,31 @@ class DeliveryApp extends ConsumerWidget {
               routerConfig: _buildRouter(auth, config),
             );
           },
-          loading: () => MaterialApp(theme: theme, home: const Scaffold(body: Center(child: CircularProgressIndicator()))),
+          loading: () => MaterialApp(
+            theme: theme,
+            localizationsDelegates: delegates,
+            supportedLocales: locales,
+            home: const Scaffold(body: Center(child: CircularProgressIndicator())),
+          ),
           error: (e, _) => MaterialApp(
             theme: theme,
-            home: Scaffold(
-              body: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Text("Can't reach the platform: $e", textAlign: TextAlign.center),
-                    const SizedBox(height: 12),
-                    FilledButton(onPressed: () => ref.invalidate(configProvider), child: const Text('Try again')),
-                  ]),
+            localizationsDelegates: delegates,
+            supportedLocales: locales,
+            home: Builder(builder: (context) {
+              final l10n = AppLocalizations.of(context);
+              return Scaffold(
+                body: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Text(l10n.cantReachPlatform('$e'), textAlign: TextAlign.center),
+                      const SizedBox(height: 12),
+                      FilledButton(onPressed: () => ref.invalidate(configProvider), child: Text(l10n.tryAgain)),
+                    ]),
+                  ),
                 ),
-              ),
-            ),
+              );
+            }),
           ),
         );
   }

@@ -19,6 +19,8 @@ apps/delivery_app/ios/Pods/
 apps/delivery_app/android/.gradle/
 apps/delivery_app/**/*.g.dart
 apps/delivery_app/**/*.freezed.dart
+# gen-l10n output, rebuilt from lib/l10n/*.arb by every pub get and build
+apps/delivery_app/lib/l10n/app_localizations*.dart
 
 # IDE
 .idea/

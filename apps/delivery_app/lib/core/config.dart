@@ -5,7 +5,6 @@
 // pack the server runs, under whatever name the buyer gave it.
 import 'brand.dart';
 
-
 class StateInfo {
   final String name;
   final String label;
@@ -24,6 +23,7 @@ class StateInfo {
 
 class AppConfig {
   final Brand brand;
+  final String locale; // the server's choice: the device's if the brand has it
   final String pack;
   final List<String> roles; // the roles this platform offers
   final List<String> modules;
@@ -34,6 +34,7 @@ class AppConfig {
 
   const AppConfig({
     required this.brand,
+    required this.locale,
     required this.pack,
     required this.roles,
     required this.modules,
@@ -45,14 +46,13 @@ class AppConfig {
 
   factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
         brand: Brand.fromJson(json['brand'] as Map<String, dynamic>),
+        locale: json['locale'] as String? ?? 'en',
         pack: (json['pack'] as Map<String, dynamic>)['name'] as String,
         roles: List<String>.from(json['roles'] as List? ?? const []),
         modules: List<String>.from(json['modules'] as List? ?? const []),
         stopsTemplate: (json['job'] as Map<String, dynamic>)['stops'] as String,
         paymentMethods: List<String>.from(json['paymentMethods'] as List? ?? const []),
-        states: ((json['lifecycle'] as Map<String, dynamic>)['states'] as List)
-            .map((e) => StateInfo.fromJson(e as Map<String, dynamic>))
-            .toList(),
+        states: ((json['lifecycle'] as Map<String, dynamic>)['states'] as List).map((e) => StateInfo.fromJson(e as Map<String, dynamic>)).toList(),
         terms: Map<String, String>.from(json['terms'] as Map? ?? const {}),
       );
 

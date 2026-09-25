@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../../providers/providers.dart';
+import '../../l10n/app_localizations.dart';
 
 /// An agent's own screen ("driver", "courier": the pack's word): go online
 /// or offline and, while online, stream real GPS to dispatch (which then
@@ -34,12 +35,13 @@ class _AgentHomeScreenState extends ConsumerState<AgentHomeScreen> {
     final user = ref.watch(authControllerProvider).user!;
     final config = ref.watch(configProvider).requireValue;
     _agentId ??= user.refId.isNotEmpty ? user.refId : null;
+    final l10n = AppLocalizations.of(context);
 
     return Scaffold(
       appBar: AppBar(
         title: Text(config.title('agent')),
         actions: [
-          IconButton(icon: const Icon(Icons.logout), onPressed: () => ref.read(authControllerProvider.notifier).logout()),
+          IconButton(icon: const Icon(Icons.logout), tooltip: l10n.logOut, onPressed: () => ref.read(authControllerProvider.notifier).logout()),
         ],
       ),
       body: _agentId == null
@@ -50,15 +52,13 @@ class _AgentHomeScreenState extends ConsumerState<AgentHomeScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   SwitchListTile(
-                    title: Text(_online ? 'Online: you can receive ${config.term('jobs')}' : 'Offline'),
+                    title: Text(_online ? l10n.onlineReceive(config.term('jobs')) : l10n.offline),
                     value: _online,
                     onChanged: _toggleOnline,
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    'When a ${config.term('job')} is ready, an available ${config.term('agent')} '
-                    'is assigned automatically. While online, this screen streams your '
-                    'location so customers can see you on the map.',
+                    l10n.agentHelp(config.term('job'), config.term('agent')),
                     style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                 ],
@@ -108,7 +108,7 @@ class _NotLinkedPrompt extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Text(
-          "Your account isn't linked to a $agent profile yet. Ask an admin to finish setting you up, then log in again.",
+          AppLocalizations.of(context).agentNotLinked(agent),
           textAlign: TextAlign.center,
         ),
       ),

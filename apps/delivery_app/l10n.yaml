@@ -1,0 +1,7 @@
+# Flutter gen-l10n: lib/l10n/app_<locale>.arb -> lib/l10n/app_localizations*.dart.
+# English is the template; every other ARB must have the same keys
+# (test/l10n_test.dart checks).
+arb-dir: lib/l10n
+template-arb-file: app_en.arb
+output-localization-file: app_localizations.dart
+nullable-getter: false

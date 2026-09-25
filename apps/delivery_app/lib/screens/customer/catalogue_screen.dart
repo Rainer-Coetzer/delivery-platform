@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../providers/providers.dart';
+import '../../l10n/app_localizations.dart';
 
 /// One merchant's catalogue ("menu" for food), with add/remove to cart.
 class CatalogueScreen extends ConsumerWidget {
@@ -15,12 +16,13 @@ class CatalogueScreen extends ConsumerWidget {
     final config = ref.watch(configProvider).requireValue;
     final catalogue = ref.watch(catalogueProvider(merchantId));
     final cart = ref.watch(cartProvider);
+    final l10n = AppLocalizations.of(context);
 
     return Scaffold(
       appBar: AppBar(title: Text(merchantName.isEmpty ? config.title('catalogue') : merchantName)),
       body: catalogue.when(
         data: (items) => items.isEmpty
-            ? Center(child: Text('Nothing on the ${config.term('catalogue')} yet'))
+            ? Center(child: Text(l10n.nothingOnCatalogue(config.term('catalogue'))))
             : ListView.builder(
                 padding: const EdgeInsets.all(12),
                 itemCount: items.length,
@@ -30,20 +32,20 @@ class CatalogueScreen extends ConsumerWidget {
                   return Card(
                     child: ListTile(
                       title: Text(item.name),
-                      subtitle: Text('${config.money(item.priceCents)}${item.available ? '' : ' (unavailable)'}'),
+                      subtitle: Text(item.available ? config.money(item.priceCents) : l10n.priceUnavailable(config.money(item.priceCents))),
                       trailing: item.available
                           ? Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 IconButton(
                                   icon: const Icon(Icons.remove_circle_outline),
-                                  tooltip: 'Remove one',
+                                  tooltip: l10n.removeOne,
                                   onPressed: qty > 0 ? () => ref.read(cartProvider.notifier).remove(item.id) : null,
                                 ),
                                 Text('$qty'),
                                 IconButton(
                                   icon: const Icon(Icons.add_circle_outline),
-                                  tooltip: 'Add one',
+                                  tooltip: l10n.addOne,
                                   onPressed: () => ref.read(cartProvider.notifier).add(item, merchantName: merchantName),
                                 ),
                               ],
@@ -54,13 +56,13 @@ class CatalogueScreen extends ConsumerWidget {
                 },
               ),
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, st) => Center(child: Text('Could not load the ${config.term('catalogue')}: $e')),
+        error: (e, st) => Center(child: Text(l10n.couldNotLoadThe(config.term('catalogue'), '$e'))),
       ),
       floatingActionButton: cart.isNotEmpty
           ? FloatingActionButton.extended(
               onPressed: () => context.push('/cart'),
               icon: const Icon(Icons.shopping_cart),
-              label: Text('View cart (${cart.length})'),
+              label: Text(l10n.viewCart(cart.length)),
             )
           : null,
     );

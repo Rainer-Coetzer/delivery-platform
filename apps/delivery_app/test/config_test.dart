@@ -55,7 +55,10 @@ void main() {
 
   test('sign-up is open only when the brand offers customers', () {
     expect(config.openSignUp, isTrue);
-    final noCustomers = AppConfig.fromJson({..._courier, 'roles': ['agent', 'admin']});
+    final noCustomers = AppConfig.fromJson({
+      ..._courier,
+      'roles': ['agent', 'admin']
+    });
     expect(noCustomers.openSignUp, isFalse);
   });
 }

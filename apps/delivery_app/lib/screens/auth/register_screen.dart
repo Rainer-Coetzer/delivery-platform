@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../providers/providers.dart';
+import '../../l10n/app_localizations.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
   const RegisterScreen({super.key});
@@ -21,9 +22,10 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = ref.watch(authControllerProvider);
+    final l10n = AppLocalizations.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Register')),
+      appBar: AppBar(title: Text(l10n.register)),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 400),
@@ -35,23 +37,23 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                     children: [
                       Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary, size: 48),
                       const SizedBox(height: 12),
-                      const Text('Account created. You can log in now.'),
+                      Text(l10n.accountCreated),
                       const SizedBox(height: 20),
-                      FilledButton(onPressed: () => context.go('/login'), child: const Text('Go to login')),
+                      FilledButton(onPressed: () => context.go('/login'), child: Text(l10n.goToLogin)),
                     ],
                   )
                 : Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      TextField(controller: _name, decoration: const InputDecoration(labelText: 'Name')),
+                      TextField(controller: _name, decoration: InputDecoration(labelText: l10n.name)),
                       const SizedBox(height: 12),
-                      TextField(controller: _email, decoration: const InputDecoration(labelText: 'Email')),
+                      TextField(controller: _email, decoration: InputDecoration(labelText: l10n.email)),
                       const SizedBox(height: 12),
-                      TextField(controller: _password, obscureText: true, decoration: const InputDecoration(labelText: 'Password (min 8 chars)')),
+                      TextField(controller: _password, obscureText: true, decoration: InputDecoration(labelText: l10n.passwordRule)),
                       const SizedBox(height: 12),
                       Text(
-                        'Business and staff accounts are set up by an admin.',
+                        l10n.staffAccountsByAdmin,
                         style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                       ),
                       if (_error != null) ...[
@@ -74,9 +76,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   }
 
   Future<void> _submit() async {
-    final error = await ref
-        .read(authControllerProvider.notifier)
-        .register(_name.text.trim(), _email.text.trim(), _password.text);
+    final error = await ref.read(authControllerProvider.notifier).register(_name.text.trim(), _email.text.trim(), _password.text);
     if (!mounted) return;
     setState(() {
       _error = error;

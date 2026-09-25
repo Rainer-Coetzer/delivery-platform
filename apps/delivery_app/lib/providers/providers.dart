@@ -3,6 +3,7 @@
 // for each backend module the app talks to (all through the gateway).
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' show PlatformDispatcher;
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,10 +15,15 @@ import '../models/models.dart';
 
 final apiClientProvider = Provider<ApiClient>((ref) => ApiClient());
 
-/// The platform's configuration (GET /config): words, lifecycle, modules.
-/// Fetched once; it only changes when the server's pack does.
+/// The platform's configuration (GET /config): brand, words, lifecycle,
+/// modules. Fetched once; it only changes when the server's brand or pack
+/// does. Asked for in the device's language: the server answers in it if
+/// the brand supports it, else in the brand's default, and says which
+/// (config.locale). The app's own strings follow that choice, so the
+/// pack's words and the app's never come in two languages.
 final configProvider = FutureProvider<AppConfig>((ref) async {
-  final res = await ref.watch(apiClientProvider).dio.get('/config');
+  final device = PlatformDispatcher.instance.locale.languageCode;
+  final res = await ref.watch(apiClientProvider).dio.get('/config', queryParameters: {'locale': device});
   return AppConfig.fromJson(res.data as Map<String, dynamic>);
 });
 
@@ -74,7 +80,9 @@ class AuthController extends StateNotifier<AuthState> {
   String _errorMessage(DioException e) {
     final data = e.response?.data;
     if (data is Map && data['message'] != null) return data['message'] as String;
-    return e.message ?? 'Something went wrong';
+    // '' when there's nothing to show: the screen says it in the user's
+    // language (the server's messages are English; see PROGRESS, Later).
+    return e.message ?? '';
   }
 }
 

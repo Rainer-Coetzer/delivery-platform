@@ -26,6 +26,24 @@ void main() {
     expect(const Currency(code: 'BHD', symbol: 'BD', minorUnits: 3).format(1234), 'BD1.234');
   });
 
+  test('a typed price becomes minor units without floating point', () {
+    const nad = Currency(code: 'NAD', symbol: 'N\$', minorUnits: 2);
+    expect(nad.parse('65'), 6500);
+    expect(nad.parse(' 65.5 '), 6550);
+    expect(nad.parse('65,50'), 6550); // a decimal comma (af)
+    expect(nad.parse('0.29'), 29); // 0.29 * 100 is 28.999... as a double
+    expect(nad.parse('65.'), 6500);
+    for (final bad in ['', 'abc', '-5', '65.505', '6 5', '1e3', '.5']) {
+      expect(nad.parse(bad), isNull, reason: bad);
+    }
+    const jpy = Currency(code: 'JPY', symbol: '¥', minorUnits: 0);
+    expect(jpy.parse('1500'), 1500);
+    expect(jpy.parse('1500.5'), isNull);
+    expect(nad.example, '12.50');
+    expect(jpy.example, '12');
+    expect(const Currency(code: 'BHD', symbol: 'BD', minorUnits: 3).example, '12.500');
+  });
+
   test('contrast matches the server (pkg/brand/contrast.go)', () {
     expect(contrast(Colors.black, Colors.white), closeTo(21, 0.05));
     expect(contrast(parseHex('#1D1D1F'), parseHex('#FFFBF7')), closeTo(16.3, 0.05));

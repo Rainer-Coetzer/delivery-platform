@@ -1,0 +1,326 @@
+{
+  "@@locale": "en",
+  "tryAgain": "Try again",
+  "cantReachPlatform": "Can't reach the platform: {error}",
+  "@cantReachPlatform": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "somethingWentWrong": "Something went wrong",
+  "email": "Email",
+  "password": "Password",
+  "logIn": "Log in",
+  "logOut": "Log out",
+  "noAccountRegister": "Don't have an account? Register",
+  "register": "Register",
+  "accountCreated": "Account created. You can log in now.",
+  "goToLogin": "Go to login",
+  "name": "Name",
+  "passwordRule": "Password (at least 8 characters)",
+  "@passwordRule": {
+    "description": "The identity service refuses shorter passwords."
+  },
+  "staffAccountsByAdmin": "Business and staff accounts are set up by an admin.",
+  "createAccount": "Create account",
+  "adminOverview": "Admin overview",
+  "couldNotLoadOverview": "Could not load the overview: {error}",
+  "@couldNotLoadOverview": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "totalJobs": "Total {jobs}",
+  "@totalJobs": {
+    "description": "A count; jobs is the pack's plural noun (orders, deliveries).",
+    "placeholders": {
+      "jobs": {
+        "type": "String"
+      }
+    }
+  },
+  "totalRevenue": "Total revenue",
+  "averageTimeToComplete": "Average time to complete",
+  "minutes": "{minutes} min",
+  "@minutes": {
+    "description": "Written with the locale's decimal separator (12.5 / 12,5).",
+    "placeholders": {
+      "minutes": {
+        "type": "double",
+        "format": "decimalPatternDigits",
+        "optionalParameters": {
+          "decimalDigits": 1
+        }
+      }
+    }
+  },
+  "jobsByState": "{jobs} by state",
+  "@jobsByState": {
+    "description": "jobs is capitalised: it starts the heading.",
+    "placeholders": {
+      "jobs": {
+        "type": "String"
+      }
+    }
+  },
+  "onlineReceive": "Online: you can receive {jobs}",
+  "@onlineReceive": {
+    "placeholders": {
+      "jobs": {
+        "type": "String"
+      }
+    }
+  },
+  "offline": "Offline",
+  "agentHelp": "When a {job} is ready, an available {agent} is assigned automatically. While online, this screen streams your location so customers can see you on the map.",
+  "@agentHelp": {
+    "placeholders": {
+      "job": {
+        "type": "String"
+      },
+      "agent": {
+        "type": "String"
+      }
+    }
+  },
+  "agentNotLinked": "Your account isn't linked to a {agent} profile yet. Ask an admin to finish setting you up, then log in again.",
+  "@agentNotLinked": {
+    "placeholders": {
+      "agent": {
+        "type": "String"
+      }
+    }
+  },
+  "yourCart": "Your cart",
+  "cartEmpty": "Your cart is empty",
+  "cart": "Cart",
+  "quantityTimes": "x{count}",
+  "@quantityTimes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "subtotal": "Subtotal",
+  "feeWorkedOutLater": "The delivery fee is worked out when the {job} is placed.",
+  "@feeWorkedOutLater": {
+    "placeholders": {
+      "job": {
+        "type": "String"
+      }
+    }
+  },
+  "paymentMethod": "Payment method",
+  "payCash": "Cash on delivery",
+  "payCard": "Card",
+  "placeJob": "Place {job}",
+  "@placeJob": {
+    "placeholders": {
+      "job": {
+        "type": "String"
+      }
+    }
+  },
+  "couldNotPlace": "Could not place the {job}: {error}",
+  "@couldNotPlace": {
+    "placeholders": {
+      "job": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "nothingOnCatalogue": "Nothing on the {catalogue} yet",
+  "@nothingOnCatalogue": {
+    "placeholders": {
+      "catalogue": {
+        "type": "String"
+      }
+    }
+  },
+  "priceUnavailable": "{price} (unavailable)",
+  "@priceUnavailable": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      }
+    }
+  },
+  "removeOne": "Remove one",
+  "addOne": "Add one",
+  "viewCart": "{count, plural, =1{View cart (1 item)} other{View cart ({count} items)}}",
+  "@viewCart": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "yourJobs": "Your {jobs}",
+  "@yourJobs": {
+    "placeholders": {
+      "jobs": {
+        "type": "String"
+      }
+    }
+  },
+  "couldNotLoadThe": "Could not load the {thing}: {error}",
+  "@couldNotLoadThe": {
+    "placeholders": {
+      "thing": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "couldNotLoadYour": "Could not load your {things}: {error}",
+  "@couldNotLoadYour": {
+    "placeholders": {
+      "things": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "couldNotLoad": "Could not load {things}: {error}",
+  "@couldNotLoad": {
+    "placeholders": {
+      "things": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "noneYet": "No {things} yet",
+  "@noneYet": {
+    "placeholders": {
+      "things": {
+        "type": "String"
+      }
+    }
+  },
+  "noneActive": "No active {things}",
+  "@noneActive": {
+    "placeholders": {
+      "things": {
+        "type": "String"
+      }
+    }
+  },
+  "open": "Open",
+  "closed": "Closed",
+  "noMerchantProfile": "No {merchant} profile is linked to this account yet.",
+  "@noMerchantProfile": {
+    "placeholders": {
+      "merchant": {
+        "type": "String"
+      }
+    }
+  },
+  "markReady": "Mark ready",
+  "itemName": "{item} name",
+  "@itemName": {
+    "description": "item is capitalised in English (it starts the label), lowercase in Afrikaans.",
+    "placeholders": {
+      "item": {
+        "type": "String"
+      }
+    }
+  },
+  "price": "Price",
+  "priceExample": "Enter a price like {example}",
+  "@priceExample": {
+    "placeholders": {
+      "example": {
+        "type": "String"
+      }
+    }
+  },
+  "stock": "Stock",
+  "add": "Add",
+  "priceAndStock": "{price}, stock {stock}",
+  "@priceAndStock": {
+    "placeholders": {
+      "price": {
+        "type": "String"
+      },
+      "stock": {
+        "type": "int"
+      }
+    }
+  },
+  "jobNumber": "{job} #{id}",
+  "@jobNumber": {
+    "placeholders": {
+      "job": {
+        "type": "String"
+      },
+      "id": {
+        "type": "String"
+      }
+    }
+  },
+  "jobNumberState": "{job} #{id}: {state}",
+  "@jobNumberState": {
+    "placeholders": {
+      "job": {
+        "type": "String"
+      },
+      "id": {
+        "type": "String"
+      },
+      "state": {
+        "type": "String"
+      }
+    }
+  },
+  "agentArrivesIn": "{agent} arrives in about {minutes} min",
+  "@agentArrivesIn": {
+    "placeholders": {
+      "agent": {
+        "type": "String"
+      },
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "jobCancelled": "This {job} was cancelled.",
+  "@jobCancelled": {
+    "placeholders": {
+      "job": {
+        "type": "String"
+      }
+    }
+  },
+  "waitingForAgent": "Waiting for a {agent}...",
+  "@waitingForAgent": {
+    "placeholders": {
+      "agent": {
+        "type": "String"
+      }
+    }
+  },
+  "stepDone": "{step}, done",
+  "@stepDone": {
+    "description": "Screen reader label for a finished progress step.",
+    "placeholders": {
+      "step": {
+        "type": "String"
+      }
+    }
+  }
+}

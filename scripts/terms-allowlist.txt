@@ -11,6 +11,9 @@ infra/postgres/initdb/*.sql|Renamed in Phase C|records the rename for anyone wit
 # Other packs' own vocabulary (a pack is where words belong)
 packs/*/*||each pack's terminology and demo data; freight's agents are drivers
 
+# Generated code we don't write
+apps/delivery_app/lib/l10n/app_localizations*.dart||gen-l10n output (git-ignored); its boilerplate means Xcode's Editor menu
+
 # The demo brand runs the food pack, and renames its words the way a buyer would
 config/brand.yaml||the shipped demo brand is a food platform; its terminology overrides show buyers how
 
