@@ -1,0 +1,22 @@
+// Package [[.Name]] is your module, made by platformctl new-module. It runs
+// inside the platform binary (cmd/platform/extensions.go registers it) with
+// its own database schema, "[[.Name]]", and its routes under /ext/[[.Name]].
+// README.md says what each file is for.
+package [[.Name]]
+
+import (
+	"[[.Module]]/ext/[[.Name]]/internal/api"
+	"[[.Module]]/ext/[[.Name]]/internal/migrations"
+	"[[.Module]]/ext/[[.Name]]/internal/store"
+	"[[.Module]]/pkg/app"
+)
+
+var Definition = app.Definition{
+	Name:       "[[.Name]]",
+	Migrations: migrations.FS,
+	New: func(d app.Deps) (*app.Module, error) {
+		return &app.Module{
+			Routes: (&api.API{Store: store.New(d.Pool), Auth: d.Auth}).Routes,
+		}, nil
+	},
+}

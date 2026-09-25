@@ -1,0 +1,27 @@
+package domain
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestValidateNote(t *testing.T) {
+	cases := []struct {
+		name, body string
+		ok         bool
+	}{
+		{"plain", "Collect the spare keys", true},
+		{"empty", "", false},
+		{"only spaces", "   ", false},
+		{"at the limit", strings.Repeat("a", MaxNoteRunes), true},
+		{"over the limit", strings.Repeat("a", MaxNoteRunes+1), false},
+		{"counts characters, not bytes", strings.Repeat("é", MaxNoteRunes), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := ValidateNote(c.body); (err == nil) != c.ok {
+				t.Fatalf("ValidateNote: %v, want ok=%v", err, c.ok)
+			}
+		})
+	}
+}

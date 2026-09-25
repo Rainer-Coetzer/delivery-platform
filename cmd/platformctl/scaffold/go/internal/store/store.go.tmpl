@@ -1,0 +1,50 @@
+// Package store is [[.Name]]'s database access. Its pool is already set to
+// the module's own schema.
+package store
+
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+
+	"[[.Module]]/pkg/db"
+)
+
+type Note struct {
+	ID        string    `json:"id"`
+	Body      string    `json:"body"`
+	CreatedBy string    `json:"createdBy"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type Store struct{ pool *db.Pool }
+
+func New(pool *db.Pool) *Store { return &Store{pool: pool} }
+
+func (s *Store) Add(ctx context.Context, body, createdBy string) (Note, error) {
+	n := Note{ID: uuid.NewString(), Body: body, CreatedBy: createdBy}
+	err := s.pool.QueryRow(ctx,
+		`INSERT INTO notes (id, body, created_by) VALUES ($1, $2, $3) RETURNING created_at`,
+		n.ID, n.Body, n.CreatedBy).Scan(&n.CreatedAt)
+	return n, err
+}
+
+// List returns the newest notes first, at most limit of them.
+func (s *Store) List(ctx context.Context, limit int) ([]Note, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, body, created_by, created_at FROM notes ORDER BY created_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	notes := []Note{}
+	for rows.Next() {
+		var n Note
+		if err := rows.Scan(&n.ID, &n.Body, &n.CreatedBy, &n.CreatedAt); err != nil {
+			return nil, err
+		}
+		notes = append(notes, n)
+	}
+	return notes, rows.Err()
+}

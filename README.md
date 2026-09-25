@@ -24,8 +24,9 @@ The domain is generic (job, merchant, agent, assignment; ADR-0003). The
 
 A pack (`packs/<name>/`) turns the generic core into one business: which
 capability modules are on, how a job is shaped and priced, who dispatches
-it, its lifecycle, its words, and its limits. `PACK` picks one (default
-`food`); every service in an install runs the same pack.
+it, its lifecycle, its words, and its limits. `config/brand.yaml` picks
+one (`pack:`); `PACK` in the environment overrides it for demos and the
+e2e. Every service in an install runs the same pack.
 
 | Pack | Jobs | Modules | Pricing, dispatch |
 |---|---|---|---|
@@ -38,6 +39,20 @@ Each pack has demo data and an end-to-end scenario in `packs/<name>/seed.yaml`:
 ```bash
 PACK=courier ./scripts/e2e.sh
 ```
+
+## Make it yours
+
+A buyer changes configuration first, then implements an interface, then
+adds a module ([ADR-0004](docs/adr/0004-extension-model.md)):
+
+- `config/brand.yaml`: name, logo, colours, currency, languages, map
+  tiles, service area, roles, the pack, and the pack's words and limits.
+  See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) and
+  [docs/MAPS.md](docs/MAPS.md).
+- `platformctl`: `init`, `doctor`, `new-pack`, `new-module`, `import` and
+  `brand-app`. See [docs/PLATFORMCTL.md](docs/PLATFORMCTL.md).
+- `ext/`, `packs/<yours>/`, `config/`, `cmd/platform/extensions.go` and
+  the app's `lib/extensions.dart` are yours: upgrades don't touch them.
 
 ## Running it
 
@@ -148,8 +163,12 @@ source of truth for every topic and payload shape.
 ## Repo layout
 
 ```
-cmd/platform    every module in one binary (the lite deployment)
-pkg/            shared: app (service kit), events + events/bus, kafka, outbox, db, httpx, auth, obs, config
+cmd/platform    every module in one binary (the lite deployment); extensions.go is yours
+cmd/platformctl the buyer's CLI (docs/PLATFORMCTL.md)
+config/         yours: brand.yaml, logo, app build values
+ext/            yours: your modules (platformctl new-module)
+packs/          vertical packs: food, courier, freight, and yours
+pkg/            shared: app (service kit), brand, packs, lifecycle, strategy, events + events/bus, kafka, outbox, db, httpx, auth, apiclient, obs, config
 services/       one folder per module (see table above), each with module.go + cmd/
 apps/delivery_app/  Flutter client
 infra/          postgres init, kafka topic creation, seed data, prometheus/grafana config

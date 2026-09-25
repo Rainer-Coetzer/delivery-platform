@@ -1,0 +1,72 @@
+package api
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/go-chi/chi/v5"
+
+	"[[.Module]]/pkg/auth"
+)
+
+// The route-role matrix: one row per route and role that must be refused.
+// A new route needs rows here (project conventions).
+func TestRoutesAreAdminOnly(t *testing.T) {
+	var cases []routeCase
+	for _, role := range []auth.Role{auth.RoleCustomer, auth.RoleMerchant, auth.RoleAgent} {
+		claims := &auth.Claims{UserID: "u1", Role: role, RefID: "r1"}
+		cases = append(cases,
+			routeCase{string(role) + " lists", claims, "GET", "/ext/[[.Name]]/notes", "", 403},
+			routeCase{string(role) + " adds", claims, "POST", "/ext/[[.Name]]/notes", `{"body":"x"}`, 403},
+		)
+	}
+	cases = append(cases,
+		routeCase{"no token lists", nil, "GET", "/ext/[[.Name]]/notes", "", 401},
+		routeCase{"no token adds", nil, "POST", "/ext/[[.Name]]/notes", `{"body":"x"}`, 401},
+		// An admin gets past auth; an empty note is refused before the store.
+		routeCase{"admin, empty note", &auth.Claims{UserID: "a1", Role: auth.RoleAdmin}, "POST", "/ext/[[.Name]]/notes", `{"body":"  "}`, 400},
+	)
+	runRoutes(t, cases, func(c *auth.Claims) func(chi.Router) { return (&API{Auth: as(c)}).Routes })
+}
+
+// as authenticates every request as c, or refuses it like the real
+// middleware when c is nil.
+func as(c *auth.Claims) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if c == nil {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(auth.WithClaims(r.Context(), c)))
+		})
+	}
+}
+
+type routeCase struct {
+	name   string
+	claims *auth.Claims
+	method string
+	path   string
+	body   string
+	want   int
+}
+
+// runRoutes serves each case with a nil store, so a case that gets past
+// its auth check by mistake panics instead of passing quietly.
+func runRoutes(t *testing.T, cases []routeCase, routes func(*auth.Claims) func(chi.Router)) {
+	t.Helper()
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := chi.NewRouter()
+			routes(c.claims)(r)
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, httptest.NewRequest(c.method, c.path, strings.NewReader(c.body)))
+			if rec.Code != c.want {
+				t.Fatalf("status = %d, want %d (%s)", rec.Code, c.want, rec.Body.String())
+			}
+		})
+	}
+}

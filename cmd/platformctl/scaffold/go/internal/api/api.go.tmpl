@@ -1,0 +1,65 @@
+// Package api is [[.Name]]'s HTTP routes, under /ext/[[.Name]] so they
+// can't collide with the platform's.
+package api
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+
+	"[[.Module]]/ext/[[.Name]]/internal/domain"
+	"[[.Module]]/ext/[[.Name]]/internal/store"
+	"[[.Module]]/pkg/auth"
+	"[[.Module]]/pkg/httpx"
+)
+
+// listLimit is how many notes one list returns.
+const listLimit = 50
+
+type API struct {
+	Store *store.Store
+	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
+	Auth func(http.Handler) http.Handler
+}
+
+// Routes declares who may call each route (project conventions: every route states
+// its roles, and api_test.go has a row for it).
+func (a *API) Routes(r chi.Router) {
+	r.Route("/ext/[[.Name]]", func(r chi.Router) {
+		r.Use(a.Auth, auth.RequireRole(auth.RoleAdmin))
+		r.Get("/notes", a.list)
+		r.Post("/notes", a.add)
+	})
+}
+
+func (a *API) list(w http.ResponseWriter, r *http.Request) {
+	notes, err := a.Store.List(r.Context(), listLimit)
+	if err != nil {
+		httpx.Internal(w, "could not load notes")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, notes)
+}
+
+func (a *API) add(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Body string `json:"body"`
+	}
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.BadRequest(w, err.Error())
+		return
+	}
+	if err := domain.ValidateNote(req.Body); err != nil {
+		httpx.BadRequest(w, err.Error())
+		return
+	}
+	// Who wrote it comes from the token, never from the request body.
+	claims := auth.MustFromContext(r.Context())
+	note, err := a.Store.Add(r.Context(), strings.TrimSpace(req.Body), claims.UserID)
+	if err != nil {
+		httpx.Internal(w, "could not save the note")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, note)
+}

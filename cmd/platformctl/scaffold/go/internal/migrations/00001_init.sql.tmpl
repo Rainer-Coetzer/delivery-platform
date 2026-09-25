@@ -1,0 +1,13 @@
+-- [[.Name]]: notes an admin keeps. Replace with your own tables.
+
+-- +goose Up
+CREATE TABLE notes (
+    id         TEXT PRIMARY KEY,
+    body       TEXT NOT NULL CHECK (body <> ''),
+    created_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX notes_created_at_idx ON notes (created_at DESC);
+
+-- +goose Down
+DROP TABLE notes;

@@ -1,0 +1,77 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/providers.dart';
+
+/// This module's words. The app's own strings are in lib/l10n, which is
+/// ours; yours live here, so an upgrade never conflicts with them. Add a
+/// language by adding a map with the same keys.
+const _words = {
+  'en': {'title': '[[.Title]]', 'empty': 'No notes yet', 'hint': 'Write a note', 'add': 'Add', 'failed': 'That didn\'t work'},
+  'af': {'title': '[[.Title]]', 'empty': 'Nog geen notas nie', 'hint': "Skryf 'n nota", 'add': 'Voeg by', 'failed': 'Dit het nie gewerk nie'},
+};
+
+String _t(BuildContext context, String key) {
+  final words = _words[Localizations.localeOf(context).languageCode] ?? _words['en']!;
+  return words[key] ?? _words['en']![key]!;
+}
+
+final _notesProvider = FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
+  final res = await ref.watch(apiClientProvider).dio.get('/ext/[[.Name]]/notes');
+  return List<Map<String, dynamic>>.from(res.data as List);
+});
+
+class [[.Title]]Screen extends ConsumerStatefulWidget {
+  const [[.Title]]Screen({super.key});
+
+  @override
+  ConsumerState<[[.Title]]Screen> createState() => _[[.Title]]ScreenState();
+}
+
+class _[[.Title]]ScreenState extends ConsumerState<[[.Title]]Screen> {
+  final _body = TextEditingController();
+
+  @override
+  void dispose() {
+    _body.dispose();
+    super.dispose();
+  }
+
+  Future<void> _add() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final failed = _t(context, 'failed');
+    try {
+      await ref.read(apiClientProvider).dio.post('/ext/[[.Name]]/notes', data: {'body': _body.text});
+      _body.clear();
+      ref.invalidate(_notesProvider);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('$failed: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(_t(context, 'title'))),
+      body: Column(children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(children: [
+            Expanded(child: TextField(controller: _body, decoration: InputDecoration(hintText: _t(context, 'hint')))),
+            const SizedBox(width: 8),
+            FilledButton(onPressed: _add, child: Text(_t(context, 'add'))),
+          ]),
+        ),
+        Expanded(
+          child: ref.watch(_notesProvider).when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (e, _) => Center(child: Text('${_t(context, 'failed')}: $e')),
+                data: (notes) => notes.isEmpty
+                    ? Center(child: Text(_t(context, 'empty')))
+                    : ListView(children: [for (final n in notes) ListTile(title: Text(n['body'] as String))]),
+              ),
+        ),
+      ]),
+    );
+  }
+}

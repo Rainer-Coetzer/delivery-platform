@@ -1,0 +1,29 @@
+// Package domain holds [[.Name]]'s rules. No database, HTTP or events here,
+// so every rule can be tested in a table (project conventions).
+package domain
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"unicode/utf8"
+)
+
+// MaxNoteRunes bounds a note. When a limit like this starts to matter to
+// your business, move it to your pack's settings: the platform keeps
+// business numbers in config, not code.
+const MaxNoteRunes = 2000
+
+var ErrEmptyNote = errors.New("a note needs some text")
+
+// ValidateNote says what's wrong with a note's text, if anything.
+func ValidateNote(body string) error {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return ErrEmptyNote
+	}
+	if n := utf8.RuneCountInString(body); n > MaxNoteRunes {
+		return fmt.Errorf("a note is at most %d characters; this one is %d", MaxNoteRunes, n)
+	}
+	return nil
+}

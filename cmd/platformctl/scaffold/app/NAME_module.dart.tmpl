@@ -1,0 +1,30 @@
+// Your app module, made by platformctl new-module [[.Name]] --app. It's
+// yours: an upgrade never touches lib/ext (ADR-0004). lib/extensions.dart
+// registers it. It may import lib/core and lib/l10n, never another module.
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../core/config.dart';
+import '../../core/module.dart';
+import '[[.Name]]_screen.dart';
+
+class [[.Title]]Module extends AppModule {
+  const [[.Title]]Module();
+
+  @override
+  String get name => '[[.Name]]';
+
+  // The server side (ext/[[.Name]]) only lets admins in.
+  @override
+  bool enabledFor(AppConfig config) => config.roles.contains('admin');
+
+  @override
+  List<RouteBase> routes(AppConfig config) => [
+        GoRoute(path: '/ext/[[.Name]]', builder: (context, state) => const [[.Title]]Screen()),
+      ];
+
+  @override
+  List<ModuleLink> adminLinks(AppConfig config) => const [
+        ModuleLink(label: '[[.Title]]', path: '/ext/[[.Name]]', icon: Icons.extension),
+      ];
+}

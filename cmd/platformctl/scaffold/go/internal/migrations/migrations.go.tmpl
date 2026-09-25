@@ -1,0 +1,9 @@
+// Package migrations embeds [[.Name]]'s goose migrations. They run in the
+// module's own schema at boot. Append-only: once a migration has run
+// anywhere, change the schema with a new file (00002_...), never an edit.
+package migrations
+
+import "embed"
+
+//go:embed *.sql
+var FS embed.FS

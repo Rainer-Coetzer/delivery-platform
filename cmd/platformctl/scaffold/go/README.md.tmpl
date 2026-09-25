@@ -1,0 +1,41 @@
+# [[.Title]] (your module)
+
+Made by `platformctl new-module [[.Name]]`. It's yours: an upgrade of the
+platform never touches `ext/` (ADR-0004). It works as generated. An admin
+can list and add notes at `/ext/[[.Name]]/notes`. Change it into what you
+need.
+
+| File | What it's for |
+|---|---|
+| `module.go` | how the platform runs the module: its name (also its database schema), migrations and routes |
+| `internal/domain/` | your rules, with no database or HTTP, tested in a table |
+| `internal/migrations/` | your tables, as goose files run at boot in schema `[[.Name]]`. Append-only: once one has run anywhere, add `00002_...` instead of editing it |
+| `internal/store/` | database access |
+| `internal/api/` | routes under `/ext/[[.Name]]`. Every route states its roles; `api_test.go` has a row for each route and role that must be refused |
+
+`cmd/platform/extensions.go` registers it. Remove the two `[[.Name]]`
+lines there to switch it off.
+
+## Before you build on it
+
+- **Identity comes from the token.** `auth.MustFromContext(r.Context())`,
+  never an id in the request body.
+- **Talking to other modules.** Don't import them. Call their HTTP API
+  with the `Deps.HTTP` client and `Deps.URL(module)`, and forward the
+  caller's `Authorization` header. Or react to their events with
+  `app.Module.Consumers` (topics and payloads are in `pkg/events`).
+- **Emitting events.** Write the change and `outbox.Insert` in one
+  `pool.WithTx`, and set `Outbox: true` on the module. Never publish from
+  a handler.
+- **Consuming events.** Start each handler with `db.InsertIfNew` in the
+  same transaction as its side effects, so a redelivered event does
+  nothing twice.
+- **Business numbers** (prices, limits, timeouts) belong in config, not
+  constants. `internal/domain/note.go` says where.
+
+## Deployment
+
+The module runs in the platform binary (compose `lite`). The microservice
+shape (`full`) runs each module as its own service behind the gateway, and
+a module of yours needs a service entry and a gateway route there too.
+That isn't generated yet.
