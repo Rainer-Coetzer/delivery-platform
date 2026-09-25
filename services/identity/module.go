@@ -44,12 +44,9 @@ func newModule(d app.Deps) (*app.Module, error) {
 	}, nil
 }
 
-// bootstrapAdmin creates the first admin from BOOTSTRAP_ADMIN_EMAIL and
-// BOOTSTRAP_ADMIN_PASSWORD if that email isn't registered yet. It is the only
-// way to get an admin: public registration creates customers only. Both
-// unset means "don't bootstrap"; setting just one is a config mistake.
-func bootstrapAdmin(ctx context.Context, st *store.Store, log *slog.Logger) error {
-	email, password := os.Getenv("BOOTSTRAP_ADMIN_EMAIL"), os.Getenv("BOOTSTRAP_ADMIN_PASSWORD")
+// CheckBootstrapAdmin says what's wrong with the bootstrap admin settings,
+// if anything. platformctl doctor asks the same question before a boot.
+func CheckBootstrapAdmin(email, password string) error {
 	if email == "" && password == "" {
 		return nil
 	}
@@ -58,6 +55,18 @@ func bootstrapAdmin(ctx context.Context, st *store.Store, log *slog.Logger) erro
 	}
 	if !config.IsDev() && len(password) < 12 {
 		return fmt.Errorf("BOOTSTRAP_ADMIN_PASSWORD must be at least 12 characters outside PROFILE=dev")
+	}
+	return nil
+}
+
+// bootstrapAdmin creates the first admin from BOOTSTRAP_ADMIN_EMAIL and
+// BOOTSTRAP_ADMIN_PASSWORD if that email isn't registered yet. It is the only
+// way to get an admin: public registration creates customers only. Both
+// unset means "don't bootstrap"; setting just one is a config mistake.
+func bootstrapAdmin(ctx context.Context, st *store.Store, log *slog.Logger) error {
+	email, password := os.Getenv("BOOTSTRAP_ADMIN_EMAIL"), os.Getenv("BOOTSTRAP_ADMIN_PASSWORD")
+	if err := CheckBootstrapAdmin(email, password); err != nil || email == "" {
+		return err
 	}
 	if _, err := st.GetByEmail(ctx, email); err == nil {
 		log.Info("bootstrap admin already exists", "email", email)

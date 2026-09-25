@@ -1,7 +1,8 @@
-// Package client is the tiny JSON-over-HTTP helper shared by tools/seed and
-// tools/e2e. Every error carries the method, URL, status and response body,
+// Package apiclient is the tiny JSON-over-HTTP helper for calling the
+// gateway from outside: tools/seed, tools/e2e and platformctl import.
+// Every error carries the method, URL, status and response body,
 // because "request failed" is useless when a demo breaks.
-package client
+package apiclient
 
 import (
 	"bytes"

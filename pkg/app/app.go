@@ -299,21 +299,29 @@ func run(log *slog.Logger, opts Options) error {
 	return nil
 }
 
-// openBlobs opens the file store when the pack keeps files. BLOB_DIR is
-// required outside dev: files written to a container's own filesystem
-// vanish with the container, and nobody notices until they're needed.
+// openBlobs opens the file store when the pack keeps files.
 func openBlobs(p *packs.Pack) (blob.Store, error) {
-	if !p.Has(packs.ModProof) && !p.Has(packs.ModDocuments) {
-		return nil, nil
-	}
-	dir := os.Getenv("BLOB_DIR")
-	if dir == "" {
-		if !config.IsDev() {
-			return nil, errors.New("BLOB_DIR is required: pack " + p.Name + " stores files (proof or documents); point it at a persistent volume")
-		}
-		dir = filepath.Join("data", "blobs")
+	dir, err := BlobDir(p)
+	if err != nil || dir == "" {
+		return nil, err
 	}
 	return blob.NewLocal(dir)
+}
+
+// BlobDir is where the pack's files go, or "" when it keeps none. BLOB_DIR
+// is required outside dev: files written to a container's own filesystem
+// vanish with the container, and nobody notices until they're needed.
+func BlobDir(p *packs.Pack) (string, error) {
+	if !p.Has(packs.ModProof) && !p.Has(packs.ModDocuments) {
+		return "", nil
+	}
+	if dir := os.Getenv("BLOB_DIR"); dir != "" {
+		return dir, nil
+	}
+	if !config.IsDev() {
+		return "", errors.New("BLOB_DIR is required: pack " + p.Name + " stores files (proof or documents); point it at a persistent volume")
+	}
+	return filepath.Join("data", "blobs"), nil
 }
 
 // LoadPack loads the pack this platform runs: PACK when set (tests, the
@@ -329,12 +337,18 @@ func LoadPack() (*packs.Pack, error) {
 	if dir := os.Getenv("PACKS_DIR"); dir != "" {
 		fsys = os.DirFS(dir)
 	}
-	roles := []string{string(auth.RoleCustomer), string(auth.RoleMerchant), string(auth.RoleAgent), string(auth.RoleAdmin)}
-	p, err := packs.Load(fsys, name, lifecycle.Known{Events: events.AllTopics, Roles: roles})
+	p, err := packs.Load(fsys, name, PackRules())
 	if err != nil {
 		return nil, fmt.Errorf("PACK=%s: %w", name, err)
 	}
 	return p, nil
+}
+
+// PackRules are what a pack's lifecycle may refer to: the platform's
+// events and roles. platformctl new-pack checks a new pack against them.
+func PackRules() lifecycle.Known {
+	roles := []string{string(auth.RoleCustomer), string(auth.RoleMerchant), string(auth.RoleAgent), string(auth.RoleAdmin)}
+	return lifecycle.Known{Events: events.AllTopics, Roles: roles}
 }
 
 // BrandFile is where the brand profile lives: BRAND_FILE, or

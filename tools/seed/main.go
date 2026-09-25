@@ -21,9 +21,9 @@ import (
 	"os"
 	"strings"
 
+	client "github.com/rainercoetzer/delivery-platform/pkg/apiclient"
 	"github.com/rainercoetzer/delivery-platform/pkg/app"
 	"github.com/rainercoetzer/delivery-platform/pkg/packs"
-	"github.com/rainercoetzer/delivery-platform/tools/internal/client"
 	"github.com/rainercoetzer/delivery-platform/tools/internal/seeddata"
 )
 
