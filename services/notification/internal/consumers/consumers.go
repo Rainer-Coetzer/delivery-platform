@@ -22,10 +22,11 @@ type Handlers struct {
 	Pool     *db.Pool
 	Log      *slog.Logger
 	Channels []notify.Channel
+	Words    Words // the pack
 }
 
 func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
-	n, err := build(env)
+	n, err := build(env, h.Words)
 	if err != nil {
 		return err
 	}
@@ -55,10 +56,22 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 	})
 }
 
+// Words is where notification texts get their nouns and state labels: the
+// pack's terminology, so a courier customer reads "delivery" and "courier"
+// where a food customer reads "order" and "driver". Stored notifications
+// are in the pack's English; per-user locales come with i18n (Phase D).
+type Words interface {
+	Noun(locale, key string, title bool) string
+	StateLabel(locale, state string) string
+}
+
+const locale = "en"
+
 // build maps an event to the notification it produces, or nil if this
 // service does not notify on that topic (e.g. the high-frequency
 // dispatch.location stream).
-func build(env events.Envelope) (*store.Notification, error) {
+func build(env events.Envelope, w Words) (*store.Notification, error) {
+	job, Job := w.Noun(locale, "job", false), w.Noun(locale, "job", true)
 	switch env.EventType {
 	case events.JobCreated:
 		d, err := events.Decode[events.JobCreatedData](env)
@@ -68,9 +81,11 @@ func build(env events.Envelope) (*store.Notification, error) {
 		if d.MerchantID == "" {
 			return nil, nil // a courier job has no merchant to tell
 		}
+		// Known debt: the currency is hardcoded until the platform profile
+		// (Phase D) gives one.
 		return &store.Notification{
 			Recipient: "merchant:" + d.MerchantID, JobID: d.JobID, Channel: "in-app",
-			Title: "New job", Body: fmt.Sprintf("Job %s from %s, total N$%.2f", short(d.JobID), d.CustomerName, cents(d.TotalCents)),
+			Title: "New " + job, Body: fmt.Sprintf("%s %s from %s, total N$%.2f", Job, short(d.JobID), d.CustomerName, cents(d.TotalCents)),
 		}, nil
 	case events.JobStatusChanged:
 		d, err := events.Decode[events.JobStatusChangedData](env)
@@ -79,7 +94,7 @@ func build(env events.Envelope) (*store.Notification, error) {
 		}
 		return &store.Notification{
 			Recipient: "user:" + d.CustomerID, JobID: d.JobID, Channel: "in-app",
-			Title: "Job update", Body: fmt.Sprintf("Job %s is now %s", short(d.JobID), d.To),
+			Title: Job + " update", Body: fmt.Sprintf("Your %s %s: %s", job, short(d.JobID), w.StateLabel(locale, d.To)),
 		}, nil
 	case events.JobCancelled:
 		d, err := events.Decode[events.JobCancelledData](env)
@@ -88,7 +103,7 @@ func build(env events.Envelope) (*store.Notification, error) {
 		}
 		return &store.Notification{
 			Recipient: "user:" + d.CustomerID, JobID: d.JobID, Channel: "in-app",
-			Title: "Job cancelled", Body: fmt.Sprintf("Job %s was cancelled: %s", short(d.JobID), d.Reason),
+			Title: Job + " cancelled", Body: fmt.Sprintf("Your %s %s was cancelled: %s", job, short(d.JobID), d.Reason),
 		}, nil
 	case events.MerchantAccepted:
 		d, err := events.Decode[events.MerchantDecisionData](env)
@@ -96,28 +111,28 @@ func build(env events.Envelope) (*store.Notification, error) {
 			return nil, err
 		}
 		return &store.Notification{Recipient: "job:" + d.JobID, JobID: d.JobID, Channel: "in-app",
-			Title: "Job accepted", Body: "The merchant accepted job " + short(d.JobID)}, nil
+			Title: Job + " accepted", Body: fmt.Sprintf("The %s accepted %s %s", w.Noun(locale, "merchant", false), job, short(d.JobID))}, nil
 	case events.MerchantRejected:
 		d, err := events.Decode[events.MerchantDecisionData](env)
 		if err != nil {
 			return nil, err
 		}
 		return &store.Notification{Recipient: "job:" + d.JobID, JobID: d.JobID, Channel: "in-app",
-			Title: "Job rejected", Body: "The merchant rejected job " + short(d.JobID) + ": " + d.Reason}, nil
+			Title: Job + " rejected", Body: fmt.Sprintf("The %s rejected %s %s: %s", w.Noun(locale, "merchant", false), job, short(d.JobID), d.Reason)}, nil
 	case events.PaymentFailed:
 		d, err := events.Decode[events.PaymentData](env)
 		if err != nil {
 			return nil, err
 		}
 		return &store.Notification{Recipient: "job:" + d.JobID, JobID: d.JobID, Channel: "in-app",
-			Title: "Payment failed", Body: "Payment for job " + short(d.JobID) + " failed: " + d.Reason}, nil
+			Title: "Payment failed", Body: fmt.Sprintf("Payment for %s %s failed: %s", job, short(d.JobID), d.Reason)}, nil
 	case events.DispatchAssigned:
 		d, err := events.Decode[events.AssignedData](env)
 		if err != nil {
 			return nil, err
 		}
 		return &store.Notification{Recipient: "job:" + d.JobID, JobID: d.JobID, Channel: "in-app",
-			Title: "Agent assigned", Body: fmt.Sprintf("%s is on the way, ETA %d min", d.AgentName, d.EtaMinutes)}, nil
+			Title: w.Noun(locale, "agent", true) + " assigned", Body: fmt.Sprintf("%s is on the way, ETA %d min", d.AgentName, d.EtaMinutes)}, nil
 	default:
 		return nil, nil
 	}

@@ -131,6 +131,21 @@ func (p *Pack) Config(locale string, paymentMethods []string) PublicConfig {
 	return cfg
 }
 
+// StateLabel is how the pack names a lifecycle state to people.
+func (p *Pack) StateLabel(locale, state string) string {
+	return p.label(locale, "state."+state, state)
+}
+
+// Noun is the pack's word for a core noun, capitalised for the start of a
+// sentence or a title when title is set ("order" -> "Order").
+func (p *Pack) Noun(locale, key string, title bool) string {
+	w := p.Term(locale, key)
+	if title && w != "" {
+		return strings.ToUpper(w[:1]) + w[1:]
+	}
+	return w
+}
+
 // label is the pack's word for key, or a readable form of the name when
 // the pack gives none (IN_TRANSIT -> "In transit").
 func (p *Pack) label(locale, key, name string) string {

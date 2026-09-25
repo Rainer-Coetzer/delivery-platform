@@ -237,7 +237,7 @@ func stops(ctx context.Context, q queryer, jobID string) ([]domain.Stop, error) 
 }
 
 // CountOpen returns how many jobs haven't finished, for surge pricing: the
-// merchant's own when there is one (a busy kitchen), all of them when
+// merchant's own when there is one (a busy merchant), all of them when
 // there isn't (courier jobs share one pool of agents).
 func (s *Store) CountOpen(ctx context.Context, merchantID string) (int, error) {
 	var n int
