@@ -1,7 +1,7 @@
-// Package consumers turns every job/payment/delivery event into a
+// Package consumers turns every job, payment and dispatch event into a
 // human-readable notification for the customer, merchant or agent
-// involved, and logs it to the console and an "email" stub — real channels
-// would plug in here without touching any other service.
+// involved: stored for the in-app inbox, and sent over each of the pack's
+// notify channels (pkg/strategy/notify).
 package consumers
 
 import (
@@ -14,12 +14,14 @@ import (
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/strategy/notify"
 	"github.com/rainercoetzer/delivery-platform/services/notification/internal/store"
 )
 
 type Handlers struct {
-	Pool *db.Pool
-	Log  *slog.Logger
+	Pool     *db.Pool
+	Log      *slog.Logger
+	Channels []notify.Channel
 }
 
 func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
@@ -39,8 +41,16 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 		if err := store.Insert(ctx, tx, n); err != nil {
 			return err
 		}
-		h.Log.Info("notification", "recipient", n.Recipient, "title", n.Title, "body", n.Body, "channel", "console")
-		h.Log.Info("notification (email stub)", "recipient", n.Recipient, "title", n.Title)
+		// Sent inside the transaction: a channel that fails rolls back the
+		// inbox row and the event retries. The channels that did succeed
+		// send again on the retry, so delivery is at-least-once. Real
+		// channels (Phase E) should be idempotent on the notification id.
+		msg := notify.Message{Recipient: n.Recipient, JobID: n.JobID, Title: n.Title, Body: n.Body}
+		for _, ch := range h.Channels {
+			if err := ch.Send(ctx, msg); err != nil {
+				return fmt.Errorf("send notification %s: %w", n.ID, err)
+			}
+		}
 		return nil
 	})
 }

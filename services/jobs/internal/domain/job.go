@@ -147,24 +147,3 @@ func (j *Job) EventStops() []events.Stop {
 	}
 	return out
 }
-
-// SurgeMultiplierFor computes a delivery-fee multiplier from current system
-// load: more open jobs per free agent pushes the multiplier up, capped so
-// it never becomes punitive. Moves to the pricing strategies (Phase C
-// step 4).
-func SurgeMultiplierFor(openJobs, freeAgents int) float64 {
-	if freeAgents <= 0 {
-		freeAgents = 1
-	}
-	ratio := float64(openJobs) / float64(freeAgents)
-	switch {
-	case ratio <= 1:
-		return 1.0
-	case ratio <= 2:
-		return 1.2
-	case ratio <= 4:
-		return 1.5
-	default:
-		return 2.0
-	}
-}

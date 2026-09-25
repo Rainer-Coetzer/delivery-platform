@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -19,6 +20,8 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
 	"github.com/rainercoetzer/delivery-platform/pkg/packs"
+	"github.com/rainercoetzer/delivery-platform/pkg/strategy/payment"
+	"github.com/rainercoetzer/delivery-platform/pkg/strategy/pricing"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/catalogue"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/consumers"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/domain"
@@ -37,6 +40,8 @@ type API struct {
 	Catalogue Catalogue
 	Log       *slog.Logger
 	Pack      *packs.Pack
+	Pricing   pricing.Policy
+	Payments  *payment.Set
 	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
 	Auth func(http.Handler) http.Handler
 }
@@ -97,6 +102,10 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, "merchantId and paymentMethod are required")
 		return
 	}
+	if _, ok := a.Payments.For(req.PaymentMethod); !ok {
+		httpx.BadRequest(w, "paymentMethod must be one of: "+strings.Join(a.Payments.Methods(), ", "))
+		return
+	}
 	if !validDropoff(req.Dropoff) {
 		httpx.BadRequest(w, "dropoff must be a real coordinate (lat -90..90, lng -180..180)")
 		return
@@ -123,6 +132,11 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, err.Error())
 		return
 	}
+	stops := []domain.Stop{
+		{Stop: events.Stop{Seq: 0, Kind: events.StopPickup, MerchantID: rest.ID,
+			Location: events.Location{Lat: rest.Lat, Lng: rest.Lng, Label: rest.Name}}},
+		{Stop: events.Stop{Seq: 1, Kind: events.StopDropoff, Location: req.Dropoff}},
+	}
 
 	openJobs, err := a.Store.CountOpen(ctx, req.MerchantID)
 	if err != nil {
@@ -130,14 +144,23 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, "could not price job")
 		return
 	}
-	// Known debt (audit P1, Phase 4): surge uses one merchant's load and a
-	// fixed agent estimate, and the fee below is float maths. Both move to
-	// pricing.Policy.
-	const assumedFreeAgents = 5
-	surge := domain.SurgeMultiplierFor(openJobs, assumedFreeAgents)
-	const baseDeliveryFeeCents = 1000
-	deliveryFee := int64(float64(baseDeliveryFeeCents) * surge)
-	total := subtotal + deliveryFee
+	q, err := a.Pricing.Price(ctx, pricing.Input{
+		SubtotalCents: subtotal,
+		Stops:         (&domain.Job{Stops: stops}).EventStops(),
+		// Known debt (audit P1): the load is one merchant's open jobs over a
+		// fixed agent estimate. The jobs module doesn't know how many agents
+		// are free; dispatch does, and doesn't publish it yet.
+		Load: pricing.Load{OpenJobs: openJobs, FreeAgents: assumedFreeAgents},
+	})
+	if errors.Is(err, pricing.ErrNoFare) {
+		httpx.BadRequest(w, err.Error())
+		return
+	}
+	if err != nil {
+		a.Log.Error("price job", "error", err)
+		httpx.Internal(w, "could not price job")
+		return
+	}
 
 	m := a.Pack.Lifecycle
 	job := &domain.Job{
@@ -151,16 +174,12 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		Milestone:        lifecycle.Created,
 		Facts:            map[string]bool{},
 		Items:            items,
-		SubtotalCents:    subtotal,
-		DeliveryFeeCents: deliveryFee,
-		SurgeMultiplier:  surge,
-		TotalCents:       total,
+		SubtotalCents:    q.SubtotalCents,
+		DeliveryFeeCents: q.FeeCents,
+		SurgeMultiplier:  float64(q.MultiplierPct) / 100, // display only; the fee is integer cents
+		TotalCents:       q.TotalCents,
 		PaymentMethod:    req.PaymentMethod,
-		Stops: []domain.Stop{
-			{Stop: events.Stop{Seq: 0, Kind: events.StopPickup, MerchantID: rest.ID,
-				Location: events.Location{Lat: rest.Lat, Lng: rest.Lng, Label: rest.Name}}},
-			{Stop: events.Stop{Seq: 1, Kind: events.StopDropoff, Location: req.Dropoff}},
-		},
+		Stops:            stops,
 	}
 
 	eventItems := make([]events.JobLine, 0, len(items))
@@ -170,8 +189,8 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 	env, err := events.New(events.JobCreated, job.ID, events.JobCreatedData{
 		JobID: job.ID, CustomerID: job.CustomerID, CustomerName: job.CustomerName,
 		MerchantID: job.MerchantID, MerchantName: job.MerchantName,
-		Items: eventItems, SubtotalCents: subtotal, DeliveryFeeCents: deliveryFee,
-		SurgeMultiplier: surge, TotalCents: total, PaymentMethod: req.PaymentMethod,
+		Items: eventItems, SubtotalCents: job.SubtotalCents, DeliveryFeeCents: job.DeliveryFeeCents,
+		SurgeMultiplier: job.SurgeMultiplier, TotalCents: job.TotalCents, PaymentMethod: req.PaymentMethod,
 		Pack: job.Pack, State: job.Status, Stops: job.EventStops(),
 	})
 	if err != nil {
@@ -198,6 +217,10 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusCreated, job)
 }
+
+// assumedFreeAgents stands in for the real count of free agents in the
+// surge load until dispatch publishes it.
+const assumedFreeAgents = 5
 
 // validDropoff rejects out-of-range coordinates and the 0,0 an omitted
 // dropoff decodes to (a point in the Atlantic that would send an agent

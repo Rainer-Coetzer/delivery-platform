@@ -17,7 +17,9 @@ import (
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/geo"
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
+	"github.com/rainercoetzer/delivery-platform/pkg/strategy/eta"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/consumers"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/domain"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/progress"
@@ -25,10 +27,11 @@ import (
 )
 
 type PendingAssignmentRetrier struct {
-	Pool     *db.Pool
-	Store    *store.Store
-	Log      *slog.Logger
-	Interval time.Duration
+	Pool       *db.Pool
+	Dispatcher *consumers.Dispatcher
+	Store      *store.Store
+	Log        *slog.Logger
+	Interval   time.Duration
 }
 
 func (p *PendingAssignmentRetrier) Run(ctx context.Context) {
@@ -55,7 +58,7 @@ func (p *PendingAssignmentRetrier) tick(ctx context.Context) {
 	}
 	for _, pa := range pending {
 		err := p.Pool.WithTx(ctx, func(tx pgx.Tx) error {
-			outcome, err := consumers.TryAssign(ctx, tx, pa)
+			outcome, err := p.Dispatcher.TryAssign(ctx, tx, pa)
 			if err != nil {
 				return err
 			}
@@ -79,6 +82,7 @@ type LocationSimulator struct {
 	Producer outbox.Publisher
 	Log      *slog.Logger
 	Interval time.Duration
+	ETA      eta.Estimator
 	// StepMeters is how far an agent moves toward its target per tick.
 	StepMeters float64
 	// Autopilot (DEMO_AUTOPILOT) makes a simulated agent pick up when it
@@ -137,7 +141,7 @@ func (s *LocationSimulator) advance(ctx context.Context, d *store.Assignment, ta
 		return
 	}
 
-	eta := domain.ETAMinutes(domain.HaversineMeters(newLat, newLng, target.Lat, target.Lng))
+	eta := s.ETA.Minutes(geo.HaversineMeters(newLat, newLng, target.Lat, target.Lng), current.Vehicle)
 	if err := store.UpdateETA(ctx, s.Pool, d.ID, eta); err != nil {
 		s.Log.Error("update eta", "error", err)
 	}

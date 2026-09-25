@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -18,7 +19,8 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
-	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/domain"
+	dispatchstrategy "github.com/rainercoetzer/delivery-platform/pkg/strategy/dispatch"
+	"github.com/rainercoetzer/delivery-platform/pkg/strategy/eta"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/progress"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/store"
 )
@@ -27,8 +29,9 @@ import (
 var Topics = []string{events.JobStatusChanged, events.JobCancelled}
 
 type Handlers struct {
-	Pool *db.Pool
-	Log  *slog.Logger
+	Pool       *db.Pool
+	Log        *slog.Logger
+	Dispatcher *Dispatcher
 }
 
 func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
@@ -92,7 +95,7 @@ func (h *Handlers) handleReady(ctx context.Context, env events.Envelope, route *
 		if err != nil || !isNew {
 			return err
 		}
-		outcome, err := TryAssign(ctx, tx, route)
+		outcome, err := h.Dispatcher.TryAssign(ctx, tx, route)
 		if err != nil {
 			return err
 		}
@@ -155,10 +158,22 @@ const (
 	JobCancelled
 )
 
-// TryAssign locks and claims the nearest AVAILABLE agent to the pickup
-// point, creates the assignment, and inserts the dispatch.assigned outbox
-// event. It never assigns a tombstoned (cancelled) job.
-func TryAssign(ctx context.Context, tx pgx.Tx, r *store.Route) (AssignOutcome, error) {
+// Dispatcher assigns jobs with the pack's dispatch strategy and ETA model.
+type Dispatcher struct {
+	Strategy dispatchstrategy.Strategy
+	ETA      eta.Estimator
+}
+
+// maxCandidates bounds how many free agents a strategy chooses among: the
+// nearest 20 is plenty for any sane radius, and keeps the query cheap.
+const maxCandidates = 20
+
+// TryAssign asks the strategy for an agent among the free ones nearest the
+// pickup, claims it, creates the assignment, and inserts the
+// dispatch.assigned outbox event. If the pick was taken by a concurrent
+// assignment, it asks again without that agent. It never assigns a
+// tombstoned (cancelled) job.
+func (d *Dispatcher) TryAssign(ctx context.Context, tx pgx.Tx, r *store.Route) (AssignOutcome, error) {
 	jobID := r.JobID
 	if err := store.LockJob(ctx, tx, jobID); err != nil {
 		return 0, err
@@ -171,18 +186,15 @@ func TryAssign(ctx context.Context, tx pgx.Tx, r *store.Route) (AssignOutcome, e
 		return JobCancelled, nil
 	}
 
-	agent, err := store.FindNearestAvailableForUpdate(ctx, tx, r.PickupLat, r.PickupLng)
-	if errors.Is(err, store.ErrNotFound) {
-		return NoAgentFree, nil
-	}
-	if err != nil {
-		return 0, err
+	agent, err := d.claim(ctx, tx, r)
+	if err != nil || agent == nil {
+		return NoAgentFree, err
 	}
 	if err := store.MarkAgentBusy(ctx, tx, agent.ID); err != nil {
 		return 0, err
 	}
 
-	eta := domain.ETAMinutes(domain.HaversineMeters(agent.Lat, agent.Lng, r.PickupLat, r.PickupLng))
+	eta := d.ETA.Minutes(agent.DistanceMeters, agent.Vehicle)
 	assignment := &store.Assignment{
 		ID: uuid.NewString(), JobID: jobID, AgentID: agent.ID, MerchantID: r.MerchantID,
 		PickupLat: r.PickupLat, PickupLng: r.PickupLng, DropoffLat: r.DropoffLat, DropoffLng: r.DropoffLng,
@@ -204,4 +216,36 @@ func TryAssign(ctx context.Context, tx pgx.Tx, r *store.Route) (AssignOutcome, e
 		return 0, err
 	}
 	return Assigned, nil
+}
+
+// claim returns the locked agent the strategy picked, or nil if nobody
+// suitable is free.
+func (d *Dispatcher) claim(ctx context.Context, tx pgx.Tx, r *store.Route) (*store.Candidate, error) {
+	found, err := store.AvailableCandidates(ctx, tx, r.PickupLat, r.PickupLng, maxCandidates)
+	if err != nil {
+		return nil, err
+	}
+	for len(found) > 0 {
+		options := make([]dispatchstrategy.Candidate, len(found))
+		for i, c := range found {
+			options[i] = dispatchstrategy.Candidate{ID: c.ID, Vehicle: c.Vehicle, DistanceMeters: c.DistanceMeters, AssignmentsToday: c.AssignmentsToday}
+		}
+		pick, ok := d.Strategy.Pick(ctx, dispatchstrategy.Request{JobID: r.JobID}, options)
+		if !ok {
+			return nil, nil
+		}
+		i := slices.IndexFunc(found, func(c store.Candidate) bool { return c.ID == pick.ID })
+		if i < 0 {
+			return nil, fmt.Errorf("dispatch strategy picked %q, which wasn't a candidate", pick.ID)
+		}
+		err := store.LockAvailable(ctx, tx, pick.ID)
+		if err == nil {
+			return &found[i], nil
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
+		found = slices.Delete(found, i, i+1) // taken meanwhile: choose again without them
+	}
+	return nil, nil
 }

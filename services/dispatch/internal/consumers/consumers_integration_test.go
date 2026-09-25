@@ -15,6 +15,9 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/db/dbtest"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
+	dispatchstrategy "github.com/rainercoetzer/delivery-platform/pkg/strategy/dispatch"
+	"github.com/rainercoetzer/delivery-platform/pkg/strategy/eta"
+	"github.com/rainercoetzer/delivery-platform/pkg/strategy/strategytest"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/migrations"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/progress"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/store"
@@ -26,15 +29,32 @@ var (
 )
 
 func setup(t *testing.T) (*Handlers, *db.Pool, *store.Store) {
+	return setupWith(t, "nearest", "")
+}
+
+func setupWith(t *testing.T, strategy, params string) (*Handlers, *db.Pool, *store.Store) {
 	t.Helper()
 	pool := dbtest.New(t, migrations.FS)
-	return &Handlers{Pool: pool, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}, pool, store.New(pool)
+	pick, err := dispatchstrategy.Build(strategy, strategytest.Params(t, "dispatch", params))
+	if err != nil {
+		t.Fatal(err)
+	}
+	est, err := eta.Build("vehicle_speed", strategytest.Params(t, "eta", "{default_mps: 8.3}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &Handlers{Pool: pool, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Dispatcher: &Dispatcher{Strategy: pick, ETA: est}}
+	return h, pool, store.New(pool)
 }
 
 func availableAgent(t *testing.T, st *store.Store) string {
+	return availableAgentAt(t, st, -22.57, 17.08)
+}
+
+func availableAgentAt(t *testing.T, st *store.Store, lat, lng float64) string {
 	t.Helper()
 	ctx := context.Background()
-	d := &store.Agent{ID: uuid.NewString(), Name: "Test Agent", Vehicle: "bike", Status: "OFFLINE", Lat: -22.57, Lng: 17.08}
+	d := &store.Agent{ID: uuid.NewString(), Name: "Test Agent", Vehicle: "bike", Status: "OFFLINE", Lat: lat, Lng: lng}
 	if err := st.RegisterAgent(ctx, d); err != nil {
 		t.Fatal(err)
 	}
@@ -222,5 +242,37 @@ func TestProgressReportsStopSeqs(t *testing.T) {
 	}
 	if len(seqs) != 2 || seqs[0] != 3 || seqs[1] != 5 {
 		t.Fatalf("stop-completed seqs = %v, want [3 5]", seqs)
+	}
+}
+
+// least_loaded against the real candidate query: the agent right at the
+// pickup already did a job today, so the idle one further away (but in
+// range) gets the next one.
+func TestLeastLoadedUsesTodaysAssignments(t *testing.T) {
+	h, pool, st := setupWith(t, "least_loaded", "{within_km: 5}")
+	ctx := context.Background()
+	near := availableAgentAt(t, st, pickup.Lat, pickup.Lng)
+	first := uuid.NewString()
+	if err := h.Handle(ctx, ready(t, first)); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := st.GetByJob(ctx, first); err != nil || a.AgentID != near {
+		t.Fatalf("the only agent takes the first job: %+v %v", a, err)
+	}
+	a, _ := st.GetByJob(ctx, first)
+	if err := progress.Advance(ctx, pool, a.ID, progress.StatusAssigned, progress.StatusPickedUp); err != nil {
+		t.Fatal(err)
+	}
+	if err := progress.Advance(ctx, pool, a.ID, progress.StatusPickedUp, progress.StatusCompleted); err != nil {
+		t.Fatal(err)
+	}
+
+	far := availableAgentAt(t, st, pickup.Lat+0.02, pickup.Lng) // ~2 km away, no jobs yet
+	second := uuid.NewString()
+	if err := h.Handle(ctx, ready(t, second)); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := st.GetByJob(ctx, second); err != nil || a.AgentID != far {
+		t.Fatalf("least_loaded should pick the idle agent %s, got %+v %v", far, a, err)
 	}
 }

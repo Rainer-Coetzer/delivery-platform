@@ -18,6 +18,7 @@ import (
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/events/bus"
 	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/domain"
@@ -69,7 +70,7 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 				return err
 			}
 			if trigger.Stop, err = j.CompleteStop(data.StopSeq, env.Timestamp); err != nil {
-				return err
+				return bus.Permanent(err) // a stop the job doesn't have, or one already done: a retry can't fix it
 			}
 			if err := store.MarkStopCompleted(ctx, tx, j.ID, data.StopSeq, env.Timestamp); err != nil {
 				return err
@@ -87,9 +88,13 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 			}
 			if err != nil {
 				// On a live job this means the pack's lifecycle and the event
-				// flow disagree. Fail so it retries and then dead-letters
-				// where an operator will see it.
-				return fmt.Errorf("apply %s to job %s: %w", env.EventType, j.ID, err)
+				// flow disagree. Retrying can't change that, so it goes
+				// straight to the dead letters, where an operator sees it.
+				err = fmt.Errorf("apply %s to job %s: %w", env.EventType, j.ID, err)
+				if errors.Is(err, lifecycle.ErrNoTransition) {
+					return bus.Permanent(err)
+				}
+				return err
 			}
 		}
 		if err := store.Save(ctx, tx, j, steps); err != nil {

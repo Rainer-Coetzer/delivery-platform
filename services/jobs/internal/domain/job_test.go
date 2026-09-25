@@ -89,22 +89,3 @@ func TestJob_SettleOnFoodIsANoop(t *testing.T) {
 		t.Fatalf("a new food job waits: %+v", steps)
 	}
 }
-
-func TestSurgeMultiplierFor(t *testing.T) {
-	cases := []struct {
-		openJobs, freeAgents int
-		want                 float64
-	}{
-		{0, 5, 1.0},
-		{5, 5, 1.0},
-		{8, 5, 1.2},
-		{15, 5, 1.5},
-		{30, 5, 2.0},
-		{10, 0, 2.0}, // no free agents at all is worst case
-	}
-	for _, c := range cases {
-		if got := SurgeMultiplierFor(c.openJobs, c.freeAgents); got != c.want {
-			t.Errorf("SurgeMultiplierFor(%d, %d) = %v, want %v", c.openJobs, c.freeAgents, got, c.want)
-		}
-	}
-}

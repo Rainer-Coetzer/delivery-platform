@@ -1,5 +1,6 @@
-// Package payment is the payments module: simulated authorization on job
-// creation and refunds on cancellation.
+// Package payment is the payments module: authorization on job creation,
+// through the pack's payment providers (pkg/strategy/payment), and refunds
+// on cancellation.
 package payment
 
 import (
@@ -15,7 +16,7 @@ var Definition = app.Definition{
 	Name:       "payment",
 	Migrations: migrations.FS,
 	New: func(d app.Deps) (*app.Module, error) {
-		h := &consumers.Handlers{Pool: d.Pool, Log: d.Log}
+		h := &consumers.Handlers{Pool: d.Pool, Log: d.Log, Payments: d.Strategies.Payments}
 		return &app.Module{
 			Routes: (&api.API{Store: store.New(d.Pool), Log: d.Log, Auth: d.Auth}).Routes,
 			Outbox: true,

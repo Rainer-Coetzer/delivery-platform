@@ -95,6 +95,9 @@ type Deps struct {
 	Embedded bool
 	// Pack is the vertical pack this install runs (PACK), already validated.
 	Pack *packs.Pack
+	// Strategies are the pack's pricing, dispatch, ETA, payment and notify
+	// choices, already built.
+	Strategies *Strategies
 }
 
 // Options for Run.
@@ -120,6 +123,10 @@ var defaultServiceURLs = map[string]string{
 // worse than a stopped one.
 func Run(opts Options) {
 	log := obs.NewLogger(opts.Name)
+	// Strategies have no Deps (they're built from params alone), so the ones
+	// that log, like the console notify channel, use the default logger.
+	// Make that this service's JSON logger rather than Go's plain text one.
+	slog.SetDefault(log)
 	if err := run(log, opts); err != nil {
 		log.Error("startup failed", "error", err)
 		os.Exit(1)
@@ -137,7 +144,11 @@ func run(log *slog.Logger, opts Options) error {
 	if err != nil {
 		return err
 	}
-	log.Info("pack loaded", "pack", pack.Name, "modules", pack.Modules)
+	strategies, err := BuildStrategies(pack)
+	if err != nil {
+		return err
+	}
+	log.Info("pack loaded", "pack", pack.Name, "modules", pack.Modules, "payment", strategies.Payments.Methods())
 	needsDB := false
 	for _, d := range opts.Definitions {
 		needsDB = needsDB || d.Migrations != nil
@@ -195,7 +206,7 @@ func run(log *slog.Logger, opts Options) error {
 	defer cancelRun()
 
 	for _, def := range opts.Definitions {
-		deps := Deps{Log: log.With("module", def.Name), Bus: b, Issuer: issuer, Auth: issuer.Middleware, HTTP: httpClient, URL: urlFor, Embedded: opts.Embedded, Pack: pack}
+		deps := Deps{Log: log.With("module", def.Name), Bus: b, Issuer: issuer, Auth: issuer.Middleware, HTTP: httpClient, URL: urlFor, Embedded: opts.Embedded, Pack: pack, Strategies: strategies}
 		if def.Migrations != nil {
 			pool, err := openModuleDB(ctx, dsn, def, opts.Embedded)
 			if err != nil {

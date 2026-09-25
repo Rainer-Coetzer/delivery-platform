@@ -12,13 +12,14 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
-	"github.com/rainercoetzer/delivery-platform/services/payment/internal/domain"
+	"github.com/rainercoetzer/delivery-platform/pkg/strategy/payment"
 	"github.com/rainercoetzer/delivery-platform/services/payment/internal/store"
 )
 
 type Handlers struct {
-	Pool *db.Pool
-	Log  *slog.Logger
+	Pool     *db.Pool
+	Log      *slog.Logger
+	Payments *payment.Set
 }
 
 func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
@@ -50,7 +51,11 @@ func (h *Handlers) charge(ctx context.Context, env events.Envelope, data events.
 			return nil
 		}
 
-		approved, reason := domain.Authorize(data.PaymentMethod, data.TotalCents)
+		res, err := h.authorize(ctx, data)
+		if err != nil {
+			return err // couldn't ask the gateway: retry the event
+		}
+		approved, reason := res.Approved, res.Reason
 		status := "COMPLETED"
 		if !approved {
 			status = "FAILED"
@@ -81,6 +86,18 @@ func (h *Handlers) charge(ctx context.Context, env events.Envelope, data events.
 		}
 		return outbox.Insert(ctx, tx, out)
 	})
+}
+
+// authorize asks the pack's provider for the job's payment method. The jobs
+// API only accepts methods the pack has, so a missing one means the pack
+// changed under a job in flight: decline it, which cancels the job with a
+// reason a person can read, rather than retrying forever.
+func (h *Handlers) authorize(ctx context.Context, data events.JobCreatedData) (payment.Result, error) {
+	p, ok := h.Payments.For(data.PaymentMethod)
+	if !ok {
+		return payment.Result{Reason: "payment method " + data.PaymentMethod + " is not accepted"}, nil
+	}
+	return p.Authorize(ctx, payment.Charge{JobID: data.JobID, AmountCents: data.TotalCents, Method: data.PaymentMethod})
 }
 
 func (h *Handlers) refund(ctx context.Context, env events.Envelope, data events.JobCancelledData) error {

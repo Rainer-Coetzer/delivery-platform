@@ -22,7 +22,7 @@ var Definition = app.Definition{
 				topics = append(topics, t)
 			}
 		}
-		h := &consumers.Handlers{Pool: d.Pool, Log: d.Log}
+		h := &consumers.Handlers{Pool: d.Pool, Log: d.Log, Channels: d.Strategies.Notify}
 		return &app.Module{
 			Routes:    (&api.API{Store: store.New(d.Pool), Auth: d.Auth}).Routes,
 			Consumers: []app.Consumer{{Group: "notification-service", Topics: topics, Handler: h.Handle}},

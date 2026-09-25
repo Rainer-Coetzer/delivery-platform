@@ -17,6 +17,7 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/db/dbtest"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/events/bus"
 	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/pkg/packs"
 	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/domain"
@@ -182,13 +183,13 @@ func TestDuplicateEventHasOneEffect(t *testing.T) {
 
 // An event that makes no sense for a live job (ready before it was even
 // confirmed) means the pack and the event flow disagree. It must fail,
-// so it retries and dead-letters where someone sees it, not vanish.
+// straight to the dead letters where someone sees it, not vanish.
 func TestImpossibleEventOnLiveJobFails(t *testing.T) {
 	h, pool := setup(t)
 	id := newJob(t, pool)
 	err := send(t, h, events.MerchantReady, id, events.MerchantReadyData{JobID: id})
-	if !errors.Is(err, lifecycle.ErrNoTransition) {
-		t.Fatalf("want ErrNoTransition, got %v", err)
+	if !errors.Is(err, lifecycle.ErrNoTransition) || !bus.IsPermanent(err) {
+		t.Fatalf("want a permanent ErrNoTransition (dead-letter now, don't retry), got %v", err)
 	}
 	if j := load(t, pool, id); j.Status != "CREATED" {
 		t.Fatalf("job moved to %s", j.Status)

@@ -35,11 +35,12 @@ func newModule(d app.Deps) (*app.Module, error) {
 	d.Log.Info("agent simulation", "autopilot", autopilot, "stepMeters", stepMeters)
 
 	st := store.New(d.Pool)
-	h := &consumers.Handlers{Pool: d.Pool, Log: d.Log}
-	retrier := &sim.PendingAssignmentRetrier{Pool: d.Pool, Store: st, Log: d.Log}
+	dispatcher := &consumers.Dispatcher{Strategy: d.Strategies.Dispatch, ETA: d.Strategies.ETA}
+	h := &consumers.Handlers{Pool: d.Pool, Log: d.Log, Dispatcher: dispatcher}
+	retrier := &sim.PendingAssignmentRetrier{Pool: d.Pool, Store: st, Log: d.Log, Dispatcher: dispatcher}
 	// Location pings go straight to the bus, not the outbox: ephemeral
 	// telemetry, where a lost ping is replaced two seconds later.
-	simulator := &sim.LocationSimulator{Pool: d.Pool, Store: st, Producer: d.Bus, Log: d.Log, StepMeters: stepMeters, Autopilot: autopilot}
+	simulator := &sim.LocationSimulator{Pool: d.Pool, Store: st, Producer: d.Bus, Log: d.Log, ETA: d.Strategies.ETA, StepMeters: stepMeters, Autopilot: autopilot}
 	return &app.Module{
 		Routes:    (&api.API{Pool: d.Pool, Store: st, Log: d.Log, Auth: d.Auth}).Routes,
 		Outbox:    true,

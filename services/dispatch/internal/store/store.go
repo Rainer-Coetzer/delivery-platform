@@ -1,5 +1,5 @@
 // Package store persists agents and assignments, including the PostGIS
-// nearest-neighbor query used to assign the closest available agent.
+// nearest-neighbour query that lists the free agents a job could go to.
 package store
 
 import (
@@ -96,28 +96,55 @@ func (s *Store) ListAgents(ctx context.Context) ([]*Agent, error) {
 	return out, rows.Err()
 }
 
-// FindNearestAvailableForUpdate uses the PostGIS <-> distance operator
-// against the GiST index on agents.location to pick the closest AVAILABLE
-// agent to (lat, lng), locking that row so two concurrent assignments
-// cannot pick the same agent.
-func FindNearestAvailableForUpdate(ctx context.Context, tx pgx.Tx, lat, lng float64) (*Agent, error) {
-	row := tx.QueryRow(ctx, `
-		SELECT id, name, vehicle, status, lat, lng
-		FROM agents
-		WHERE status = 'AVAILABLE'
-		ORDER BY location <-> ST_SetSRID(ST_MakePoint($1,$2), 4326)
-		LIMIT 1
-		FOR UPDATE SKIP LOCKED`,
-		lng, lat)
-	d := &Agent{}
-	err := row.Scan(&d.ID, &d.Name, &d.Vehicle, &d.Status, &d.Lat, &d.Lng)
+// Candidate is a free agent with what a dispatch strategy decides on.
+type Candidate struct {
+	Agent
+	DistanceMeters   float64
+	AssignmentsToday int
+}
+
+// AvailableCandidates lists up to limit AVAILABLE agents, nearest to (lat,
+// lng) first (the PostGIS <-> operator on the GiST index of
+// agents.location). Nothing is locked: the strategy picks, then
+// LockAvailable claims the pick, which may have gone meanwhile.
+func AvailableCandidates(ctx context.Context, tx pgx.Tx, lat, lng float64, limit int) ([]Candidate, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT a.id, a.name, a.vehicle, a.status, a.lat, a.lng,
+		       ST_Distance(a.location, ST_SetSRID(ST_MakePoint($1,$2), 4326)::geography),
+		       (SELECT count(*) FROM assignments s WHERE s.agent_id = a.id AND s.created_at >= date_trunc('day', now()))
+		FROM agents a
+		WHERE a.status = 'AVAILABLE'
+		ORDER BY a.location <-> ST_SetSRID(ST_MakePoint($1,$2), 4326)
+		LIMIT $3`,
+		lng, lat, limit)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("find nearest agent: %w", err)
+		return nil, fmt.Errorf("list available agents: %w", err)
 	}
-	return d, nil
+	defer rows.Close()
+	var out []Candidate
+	for rows.Next() {
+		var c Candidate
+		if err := rows.Scan(&c.ID, &c.Name, &c.Vehicle, &c.Status, &c.Lat, &c.Lng, &c.DistanceMeters, &c.AssignmentsToday); err != nil {
+			return nil, fmt.Errorf("scan available agent: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// LockAvailable locks agent id if it is still AVAILABLE and nobody else
+// holds it, so two concurrent assignments can't claim the same agent.
+// ErrNotFound means it was taken in the meantime.
+func LockAvailable(ctx context.Context, tx pgx.Tx, id string) error {
+	var got string
+	err := tx.QueryRow(ctx, `SELECT id FROM agents WHERE id = $1 AND status = 'AVAILABLE' FOR UPDATE SKIP LOCKED`, id).Scan(&got)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock agent %s: %w", id, err)
+	}
+	return nil
 }
 
 func MarkAgentBusy(ctx context.Context, tx pgx.Tx, id string) error {
