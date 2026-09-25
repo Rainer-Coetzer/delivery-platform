@@ -20,34 +20,34 @@ type Settings struct {
 
 // PackagesSettings bound what a customer may declare per package line.
 type PackagesSettings struct {
-	MaxLines              int   `yaml:"max_lines"`
-	MaxQuantity           int   `yaml:"max_quantity"`
-	MaxWeightGrams        int64 `yaml:"max_weight_g"`     // per package
-	MaxDimensionMm        int   `yaml:"max_dimension_mm"` // longest side
-	MaxDeclaredValueCents int64 `yaml:"max_declared_value_cents"`
+	MaxLines              int   `yaml:"max_lines" json:"maxLines"`
+	MaxQuantity           int   `yaml:"max_quantity" json:"maxQuantity"`
+	MaxWeightGrams        int64 `yaml:"max_weight_g" json:"maxWeightGrams"`     // per package
+	MaxDimensionMm        int   `yaml:"max_dimension_mm" json:"maxDimensionMm"` // longest side
+	MaxDeclaredValueCents int64 `yaml:"max_declared_value_cents" json:"maxDeclaredValueCents"`
 }
 
 type MultiStopSettings struct {
-	MaxStops int `yaml:"max_stops"`
+	MaxStops int `yaml:"max_stops" json:"maxStops"`
 }
 
 // SchedulingSettings: how far ahead a customer may book, how narrow a
 // window may be, and how long before a window opens dispatch starts.
 type SchedulingSettings struct {
-	MaxDaysAhead     int `yaml:"max_days_ahead"`
-	MinWindowMinutes int `yaml:"min_window_minutes"`
-	LeadMinutes      int `yaml:"lead_minutes"`
+	MaxDaysAhead     int `yaml:"max_days_ahead" json:"maxDaysAhead"`
+	MinWindowMinutes int `yaml:"min_window_minutes" json:"minWindowMinutes"`
+	LeadMinutes      int `yaml:"lead_minutes" json:"leadMinutes"`
 }
 
 type ProofSettings struct {
-	PinAttempts   int   `yaml:"pin_attempts"` // wrong PINs before the stop locks
-	MaxPhotoBytes int64 `yaml:"max_photo_bytes"`
+	PinAttempts   int   `yaml:"pin_attempts" json:"pinAttempts"` // wrong PINs before the stop locks
+	MaxPhotoBytes int64 `yaml:"max_photo_bytes" json:"maxPhotoBytes"`
 }
 
 type DocumentsSettings struct {
-	MaxBytes     int64    `yaml:"max_bytes"`
-	AllowedTypes []string `yaml:"allowed_types"` // MIME types, e.g. application/pdf
-	MaxPerJob    int      `yaml:"max_per_job"`
+	MaxBytes     int64    `yaml:"max_bytes" json:"maxBytes"`
+	AllowedTypes []string `yaml:"allowed_types" json:"allowedTypes"` // MIME types, e.g. application/pdf
+	MaxPerJob    int      `yaml:"max_per_job" json:"maxPerJob"`
 }
 
 // Stop kinds a job may have. A food or courier job uses pickup and dropoff;

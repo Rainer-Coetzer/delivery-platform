@@ -7,6 +7,7 @@ package gateway
 import (
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +17,8 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/app"
 	"github.com/rainercoetzer/delivery-platform/pkg/config"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
+	"github.com/rainercoetzer/delivery-platform/pkg/packs"
 	"github.com/rainercoetzer/delivery-platform/services/gateway/internal/api"
 	"github.com/rainercoetzer/delivery-platform/services/gateway/internal/proxy"
 	"github.com/rainercoetzer/delivery-platform/services/gateway/internal/ws"
@@ -42,6 +45,9 @@ func newModule(d app.Deps) (*app.Module, error) {
 		// Live updates: /ws?jobId=<id>&token=<jwt>. The hub verifies the
 		// token and asks the jobs module whether this user may see it.
 		r.Get("/ws", hub.ServeHTTP)
+		// What the app needs to draw this platform: the pack's words,
+		// lifecycle and limits. Public (read before login); nothing secret.
+		r.Get("/config", configHandler(d.Pack, d.Strategies.Payments.Methods()))
 		if d.Embedded {
 			return // the other modules are mounted on this same router
 		}
@@ -129,5 +135,22 @@ func originHosts(origins []string) []string {
 func must(err error) {
 	if err != nil {
 		panic(err)
+	}
+}
+
+// configHandler serves the pack's public configuration in the caller's
+// locale: ?locale=af, else the first Accept-Language tag, else English.
+func configHandler(p *packs.Pack, paymentMethods []string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		locale := r.URL.Query().Get("locale")
+		if locale == "" {
+			first, _, _ := strings.Cut(r.Header.Get("Accept-Language"), ",")
+			locale, _, _ = strings.Cut(strings.TrimSpace(first), "-")
+			locale, _, _ = strings.Cut(locale, ";")
+		}
+		// It changes only when the pack does (a redeploy): let clients and
+		// proxies cache it briefly.
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		httpx.WriteJSON(w, http.StatusOK, p.Config(strings.ToLower(locale), paymentMethods))
 	}
 }
