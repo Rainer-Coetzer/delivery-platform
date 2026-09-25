@@ -1,5 +1,5 @@
 // Command e2e runs the core end-to-end suite against the running stack for
-// the pack it runs (PACK, default food): it places the job described in
+// the pack it runs (PACK, else config/brand.yaml's): it places the job described in
 // packs/<PACK>/seed.yaml through the gateway, does what a person would
 // (approve it, attach its paperwork) when the pack asks for that, and
 // waits for the completed milestone, printing each state on the way. Then

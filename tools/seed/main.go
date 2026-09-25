@@ -2,7 +2,7 @@
 // bootstrap admin: customers, merchants with catalogues and linked logins
 // (when the pack has the catalogue module), and available agents with
 // their vehicles and linked logins. The data is packs/<PACK>/seed.yaml;
-// PACK defaults to food, as on the server. Safe to re-run: existing
+// The pack is the server's: PACK, else config/brand.yaml's. Safe to re-run: existing
 // accounts are skipped, and merchants and agents are only created when
 // there are none yet.
 //

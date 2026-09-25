@@ -17,7 +17,9 @@ name: delivery-platform
 x-app-env: &app-env
   PROFILE: ${PROFILE:-dev}
   JWT_SECRET: ${JWT_SECRET:-}
-  PACK: ${PACK:-food} # every service must run the same pack
+  # Empty: the pack config/brand.yaml names. Set only to demo another pack;
+  # every service must run the same one.
+  PACK: ${PACK:-}
 
 # One image build for every Go binary; CMD picks which (see Dockerfile).
 x-go-service: &go-service
