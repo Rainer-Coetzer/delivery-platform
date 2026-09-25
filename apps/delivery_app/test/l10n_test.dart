@@ -3,8 +3,8 @@ import 'dart:io';
 
 import 'package:delivery_app/core/config.dart';
 import 'package:delivery_app/l10n/app_localizations.dart';
-import 'package:delivery_app/providers/providers.dart';
-import 'package:delivery_app/screens/auth/login_screen.dart';
+import 'package:delivery_app/core/providers.dart';
+import 'package:delivery_app/modules/auth/login_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';

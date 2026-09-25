@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
-import '../../providers/providers.dart';
+import '../../core/providers.dart';
+import '../../core/session.dart';
 import '../../l10n/app_localizations.dart';
+import 'dispatch_api.dart';
 
 /// An agent's own screen ("driver", "courier": the pack's word): go online
 /// or offline and, while online, stream real GPS to dispatch (which then

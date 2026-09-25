@@ -4,8 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart' as ll;
 
 import '../../core/config.dart';
-import '../../models/models.dart';
-import '../../providers/providers.dart';
+import '../../core/jobs.dart';
+import '../../core/models.dart';
+import '../../core/providers.dart';
 import '../../l10n/app_localizations.dart';
 
 /// Shows a job's state as it changes and, once an agent is assigned, their

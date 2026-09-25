@@ -64,6 +64,7 @@ func init() {
 | `packs/food`, `packs/courier`, `packs/freight` (reference packs) | `packs/<their-pack>/` (made by `platformctl new-pack <name> --from courier`) |
 | shipped migrations | `ext/**` (their strategies and modules) and their modules' own migrations |
 | `apps/delivery_app/lib/**` except the buyer extension point | `config/**` (brand and environment) |
+| | `apps/delivery_app/lib/extensions.dart` (the app's extension point: their `AppModule`s) and `apps/delivery_app/lib/ext/**` (those modules) |
 
 Because the buyer's changes live only in buyer-owned paths, a release that
 changes only product-owned paths merges without conflicts. Buyers who edit
@@ -85,6 +86,8 @@ notes):
 - the milestone set (ADR-0003)
 - the public REST API and the WebSocket message shapes
 - `platformctl` commands and flags
+- the app's `AppModule` interface (`apps/delivery_app/lib/core/module.dart`;
+  it grows only by members with defaults)
 
 **Internal** (may change in any release):
 

@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../models/models.dart';
-import '../../providers/providers.dart';
+import '../../core/jobs.dart';
+import '../../core/providers.dart';
+import '../../core/session.dart';
 import '../../l10n/app_localizations.dart';
 
 /// A customer's jobs ("orders", "deliveries", "loads"), newest first, with
@@ -30,12 +31,10 @@ class JobHistoryScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: FutureBuilder<List<Job>>(
-        future: ref.read(jobRepositoryProvider).byCustomer(user.id),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) return Center(child: Text(l10n.couldNotLoadYour(config.term('jobs'), '${snapshot.error}')));
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final jobs = snapshot.data!;
+      body: ref.watch(customerJobsProvider(user.id)).when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(child: Text(l10n.couldNotLoadYour(config.term('jobs'), '$e'))),
+        data: (jobs) {
           if (jobs.isEmpty) return Center(child: Text(l10n.noneYet(config.term('jobs'))));
           return ListView.builder(
             itemCount: jobs.length,

@@ -1,7 +1,9 @@
 # Delivery App (Flutter)
 
-Customer, driver, restaurant and admin client for the platform in
-`services/`, talking to everything through the gateway at `:8080`.
+The customer, merchant, agent and admin client for the platform in
+`services/`. It talks to everything through the gateway. What it looks
+like, what it calls things and which screens it has all come from
+`GET /config` (the brand and the pack).
 
 ## First-time setup
 
@@ -41,10 +43,21 @@ The gateway must already be up (`docker compose up`) and seeded
 
 ## Structure
 
-- `lib/models/` — plain classes with hand-written `fromJson`, matching each
-  service's JSON response (no code generation step).
-- `lib/core/api_client.dart` — one Dio client, attaches the stored JWT.
-- `lib/providers/providers.dart` — Riverpod: auth state, one repository per
-  backend service, and the WebSocket stream for live order tracking.
-- `lib/screens/` — one folder per role: `auth`, `customer`, `driver`,
-  `restaurant`, `admin`.
+- `lib/core/`: what every module shares. The API client, `GET /config`
+  (`config.dart`) and the theme built from the brand (`brand.dart`), the
+  signed-in user (`session.dart`), jobs and live tracking (`jobs.dart`),
+  the shared models, and `module.dart`, the `AppModule` interface.
+- `lib/modules/<name>/`: one folder per module, mirroring the backend:
+  `auth`, `catalogue`, `jobs`, `merchant`, `agent`, `admin`. Each has its
+  screens, its API calls and a `<name>_module.dart` that says when the
+  platform has it (a pack capability or a brand role), its routes, which
+  role starts there, and any tabs it adds to the merchant board.
+  **Modules never import each other** (`test/modules_test.dart`); they
+  share only `lib/core` and `lib/l10n`.
+- `lib/app_modules.dart`: the list the app is built from. `main.dart`
+  keeps the modules this platform has and builds the router from them, so
+  a platform without a catalogue has no merchant list at all.
+- `lib/extensions.dart`: **yours** (ADR-0004); add your own modules here.
+  An upgrade never changes it.
+- `lib/l10n/`: every string, as ARB (English and Afrikaans). See
+  `docs/CONFIGURATION.md`, "Languages".

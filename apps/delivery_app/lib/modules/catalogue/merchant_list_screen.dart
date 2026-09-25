@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../providers/providers.dart';
+import '../../core/providers.dart';
+import '../../core/session.dart';
 import '../../l10n/app_localizations.dart';
+import 'catalogue_api.dart';
 
 /// The merchants a customer can order from (catalogue module). Words come
 /// from the pack: "Restaurants" for food.

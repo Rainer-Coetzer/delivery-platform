@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import '../providers/providers.dart';
 import 'brand.dart';
+import 'providers.dart';
 
 /// The brand's logo from the gateway (/brand/logo), or, when the brand has
 /// none or it fails to load, its name's first letter in the primary colour.

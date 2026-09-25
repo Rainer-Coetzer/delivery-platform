@@ -4,9 +4,11 @@ import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/config.dart';
-import '../../models/models.dart';
-import '../../providers/providers.dart';
+import '../../core/models.dart';
+import '../../core/providers.dart';
 import '../../l10n/app_localizations.dart';
+import 'catalogue_api.dart';
+import 'models.dart';
 
 class CartScreen extends ConsumerStatefulWidget {
   const CartScreen({super.key});
@@ -110,7 +112,7 @@ class _CartScreenState extends ConsumerState<CartScreen> {
       final cartController = ref.read(cartProvider.notifier);
       final dropoff = await _currentLocationOrFallback(config);
 
-      final job = await ref.read(jobRepositoryProvider).createFromCatalogue(
+      final job = await ref.read(catalogueRepositoryProvider).placeJob(
             merchantId: cartController.merchantId!,
             lines: lines,
             paymentMethod: method,

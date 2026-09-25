@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../providers/providers.dart';
+import '../../core/providers.dart';
+import '../../core/session.dart';
 import '../../l10n/app_localizations.dart';
+import 'admin_api.dart';
 
 class AdminDashboardScreen extends ConsumerWidget {
   const AdminDashboardScreen({super.key});
@@ -18,12 +20,10 @@ class AdminDashboardScreen extends ConsumerWidget {
           IconButton(icon: const Icon(Icons.logout), tooltip: l10n.logOut, onPressed: () => ref.read(authControllerProvider.notifier).logout()),
         ],
       ),
-      body: FutureBuilder<Map<String, dynamic>>(
-        future: ref.read(adminRepositoryProvider).overview(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) return Center(child: Text(l10n.couldNotLoadOverview('${snapshot.error}')));
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final data = snapshot.data!;
+      body: ref.watch(adminOverviewProvider).when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(child: Text(l10n.couldNotLoadOverview('$e'))),
+        data: (data) {
           final byStatus = (data['jobsByStatus'] as Map<String, dynamic>?) ?? {};
           return ListView(
             padding: const EdgeInsets.all(16),

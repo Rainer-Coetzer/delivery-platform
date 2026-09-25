@@ -1,8 +1,8 @@
-// Plain, hand-written models with fromJson/toJson matching the JSON shapes
-// each backend module returns (see each module's internal/api package).
-// No codegen, so `flutter pub get` is the only step needed before running
-// the app. Names are the platform's generic domain (ADR-0003); what a
-// person reads comes from the pack (core/config.dart).
+// The models every module shares: a point, the logged-in user, and the
+// job (the core's noun, ADR-0003). A module's own models live in the
+// module (modules/catalogue/models.dart). Hand-written fromJson, no
+// codegen, so `flutter pub get` is the only step before running the app.
+// What a person reads comes from the pack (core/config.dart).
 
 class LatLng2 {
   final double lat;
@@ -31,58 +31,6 @@ class User {
         role: json['role'] as String,
         refId: (json['refId'] as String?) ?? '',
       );
-}
-
-class Merchant {
-  final String id;
-  final String name;
-  final double lat;
-  final double lng;
-  final bool isOpen;
-
-  Merchant({required this.id, required this.name, required this.lat, required this.lng, required this.isOpen});
-
-  factory Merchant.fromJson(Map<String, dynamic> json) => Merchant(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        lat: (json['lat'] as num).toDouble(),
-        lng: (json['lng'] as num).toDouble(),
-        isOpen: (json['isOpen'] as bool?) ?? true,
-      );
-}
-
-class CatalogueItem {
-  final String id;
-  final String merchantId;
-  final String name;
-  final int priceCents;
-  final int stockQty;
-  final bool available;
-
-  CatalogueItem({
-    required this.id,
-    required this.merchantId,
-    required this.name,
-    required this.priceCents,
-    required this.stockQty,
-    required this.available,
-  });
-
-  factory CatalogueItem.fromJson(Map<String, dynamic> json) => CatalogueItem(
-        id: json['id'] as String,
-        merchantId: json['merchantId'] as String,
-        name: json['name'] as String,
-        priceCents: (json['priceCents'] as num).toInt(),
-        stockQty: (json['stockQty'] as num).toInt(),
-        available: json['available'] as bool,
-      );
-}
-
-class CartLine {
-  final CatalogueItem item;
-  int quantity;
-  CartLine({required this.item, this.quantity = 1});
-  int get subtotalCents => item.priceCents * quantity;
 }
 
 class JobLine {
@@ -150,41 +98,5 @@ class Job {
         totalCents: (json['totalCents'] as num?)?.toInt() ?? 0,
         agentId: json['agentId'] as String? ?? '',
         actions: List<String>.from(json['actions'] as List? ?? const []),
-      );
-}
-
-class Agent {
-  final String id;
-  final String name;
-  final String vehicle;
-  final String status;
-  final double lat;
-  final double lng;
-
-  Agent({required this.id, required this.name, required this.vehicle, required this.status, required this.lat, required this.lng});
-
-  factory Agent.fromJson(Map<String, dynamic> json) => Agent(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        vehicle: json['vehicle'] as String? ?? '',
-        status: json['status'] as String,
-        lat: (json['lat'] as num).toDouble(),
-        lng: (json['lng'] as num).toDouble(),
-      );
-}
-
-class NotificationDto {
-  final String id;
-  final String title;
-  final String body;
-  final String? jobId;
-
-  NotificationDto({required this.id, required this.title, required this.body, this.jobId});
-
-  factory NotificationDto.fromJson(Map<String, dynamic> json) => NotificationDto(
-        id: json['id'] as String,
-        title: json['title'] as String,
-        body: json['body'] as String,
-        jobId: json['jobId'] as String?,
       );
 }

@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../providers/providers.dart';
+import '../../core/providers.dart';
 import '../../l10n/app_localizations.dart';
+import 'catalogue_api.dart';
 
 /// One merchant's catalogue ("menu" for food), with add/remove to cart.
 class CatalogueScreen extends ConsumerWidget {
