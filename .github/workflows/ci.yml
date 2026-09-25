@@ -64,13 +64,13 @@ jobs:
         cmd:
           - ./cmd/platform
           - ./services/gateway/cmd
-          - ./services/customer/cmd
-          - ./services/restaurant/cmd
-          - ./services/order/cmd
+          - ./services/identity/cmd
+          - ./services/merchant/cmd
+          - ./services/jobs/cmd
           - ./services/payment/cmd
-          - ./services/delivery/cmd
+          - ./services/dispatch/cmd
           - ./services/notification/cmd
-          - ./services/admin/cmd
+          - ./services/reporting/cmd
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
