@@ -12,6 +12,7 @@ RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY pkg ./pkg
 COPY services ./services
 COPY cmd ./cmd
+COPY packs ./packs
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/app ${CMD}

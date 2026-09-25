@@ -1,0 +1,57 @@
+# Food delivery: a customer orders from a restaurant's menu, the kitchen
+# prepares it, a driver collects it and brings it to the customer.
+# Reproduces the platform's original behaviour exactly.
+schema: 1
+name: food
+description: Restaurant and grocery delivery with menus, stock and prep time.
+
+modules: [catalogue]
+roles: [customer, merchant, agent, admin]
+
+job:
+  stops: merchant_to_customer   # pickup at the restaurant, dropoff at the customer
+  lines: catalogue              # lines are menu items, priced by the restaurant
+
+strategies:
+  pricing:
+    name: surge_tiers
+    params:
+      base_fee_cents: 1000
+      # Multiplier by open jobs per available agent. The last tier catches
+      # everything above the previous one.
+      tiers:
+        - { up_to_ratio: 1, multiplier_pct: 100 }
+        - { up_to_ratio: 2, multiplier_pct: 120 }
+        - { up_to_ratio: 4, multiplier_pct: 150 }
+        - { multiplier_pct: 200 }
+  dispatch: { name: nearest }
+  eta:
+    name: vehicle_speed
+    params:
+      default_mps: 8.3        # ~30 km/h city driving with stops
+  payment:
+    - name: simulated
+      params: { success_rate_pct: 90 }
+    - name: cash
+  notify:
+    - name: console
+
+terminology:
+  en:
+    job: order
+    jobs: orders
+    merchant: restaurant
+    merchants: restaurants
+    agent: driver
+    agents: drivers
+    assignment: delivery
+    catalogue: menu
+    catalogue_item: dish
+    line: item
+    state.CREATED: Placed
+    state.CONFIRMED: Confirmed
+    state.PREPARING: Preparing
+    state.READY: Ready for pickup
+    state.OUT_FOR_DELIVERY: On the way
+    state.DELIVERED: Delivered
+    state.CANCELLED: Cancelled

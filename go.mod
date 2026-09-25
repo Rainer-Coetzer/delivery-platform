@@ -14,6 +14,7 @@ require (
 	github.com/prometheus/client_golang v1.24.1
 	github.com/twmb/franz-go v1.22.0
 	github.com/twmb/franz-go/pkg/kadm v1.19.0
+	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/crypto v0.57.0
 )
 

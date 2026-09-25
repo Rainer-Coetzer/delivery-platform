@@ -1,0 +1,45 @@
+# Food delivery lifecycle. This reproduces the original hardcoded state
+# machine exactly; services/jobs tests compare the two edge by edge.
+#
+# State names are the pack's own. What the core reacts to is the milestone
+# each state maps to (docs/adr/0003-generic-logistics-model.md).
+schema: 1
+initial: CREATED
+
+states:
+  - name: CREATED
+    milestone: created
+  - name: CONFIRMED
+    milestone: confirmed
+  - name: PREPARING
+  - name: READY
+    milestone: ready_for_dispatch
+  - name: OUT_FOR_DELIVERY
+    milestone: in_transit
+  - name: DELIVERED
+    milestone: completed
+    terminal: true
+  - name: CANCELLED
+    milestone: cancelled
+    terminal: true
+
+# Facts are flags events set on a job; transitions can wait for them.
+facts:
+  paid:              { on: payments.completed }
+  merchant_accepted: { on: merchant.job-accepted }
+
+transitions:
+  # Payment and the restaurant's acceptance can arrive in either order;
+  # the job confirms once both are in, and the kitchen starts right away.
+  - { from: CREATED,          to: CONFIRMED,        auto: true, when: [paid, merchant_accepted] }
+  - { from: CONFIRMED,        to: PREPARING,        auto: true }
+  - { from: PREPARING,        to: READY,            on: merchant.job-ready }
+  - { from: READY,            to: OUT_FOR_DELIVERY, on: dispatch.stop-completed, stop: first_pickup }
+  - { from: OUT_FOR_DELIVERY, to: DELIVERED,        on: dispatch.stop-completed, stop: last_stop }
+
+  # Cancellation: automatic on a failed payment or a rejection, by an admin
+  # at any point, and by the customer until the kitchen starts.
+  - { from: "*",                  to: CANCELLED, on: payments.failed }
+  - { from: "*",                  to: CANCELLED, on: merchant.job-rejected }
+  - { from: "*",                  to: CANCELLED, by: [admin] }
+  - { from: [CREATED, CONFIRMED], to: CANCELLED, by: [customer] }
