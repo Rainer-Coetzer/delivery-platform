@@ -120,7 +120,7 @@ func courier(t *testing.T) *packs.Pack {
 
 func TestApply(t *testing.T) {
 	t.Setenv("TEST_TILE_KEY", "k")
-	b, err := Load(write(t, good+`roles: [customer, agent]
+	b, err := Load(write(t, good+`roles: [customer, agent, admin]
 payment_methods: [cash]
 overrides:
   terminology: { en: { agent: rider } }
@@ -137,7 +137,7 @@ overrides:
 	if p.Term("en", "agent") != "rider" || p.Term("en", "job") != "delivery" || p.Settings.Packages.MaxWeightGrams != 5000 {
 		t.Fatalf("overrides: %v %+v", p.Terminology["en"], p.Settings.Packages)
 	}
-	if got := b.EnabledRoles(p); strings.Join(got, ",") != "customer,agent" {
+	if got := b.EnabledRoles(p); strings.Join(got, ",") != "customer,agent,admin" {
 		t.Fatalf("roles: %v", got)
 	}
 	if got := b.EnabledPaymentMethods(p, []string{"card", "cash"}); strings.Join(got, ",") != "cash" {
@@ -148,7 +148,8 @@ overrides:
 func TestApplyRefusesWhatThePackCantDo(t *testing.T) {
 	t.Setenv("TEST_TILE_KEY", "k")
 	for _, c := range []struct{ extra, want string }{
-		{"roles: [customer, pilot]\n", `"pilot" isn't a role`},
+		{"roles: [customer, pilot, admin]\n", `"pilot" isn't a role`},
+		{"roles: [customer, agent]\n", "include admin"},
 		{"payment_methods: [bitcoin]\n", `"bitcoin" isn't a method`},
 		{"overrides:\n  settings:\n    packages: { max_lines: 0, max_quantity: 1, max_weight_g: 1, max_dimension_mm: 1, max_declared_value_cents: 1 }\n", "max_lines must be > 0"},
 		{"overrides:\n  settings:\n    multi-stop: { max_stops: 5 }\n", "multi-stop module isn't enabled"},
@@ -167,7 +168,7 @@ func TestApplyRefusesWhatThePackCantDo(t *testing.T) {
 // for its own pack, so they are left alone rather than misapplied.
 func TestApplyToAnotherPackIsANoop(t *testing.T) {
 	t.Setenv("TEST_TILE_KEY", "k")
-	b, err := Load(write(t, strings.Replace(good, "pack: courier", "pack: freight", 1)+"roles: [customer]\n"), false)
+	b, err := Load(write(t, strings.Replace(good, "pack: courier", "pack: freight", 1)+"roles: [customer, admin]\n"), false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -40,7 +40,7 @@ edit needs a restart, not a rebuild).
 | `map.tiles` | yes | the tile provider: see [MAPS.md](MAPS.md) |
 | `service_area` | no | circles (`name`, `lat`, `lng`, `radius_km`); a job with a stop outside all of them is refused. Leave out to work anywhere |
 | `pack` | yes | the pack to run (`food`, `courier`, `freight`, or yours). `PACK` in the environment overrides it, for tests and demos |
-| `roles` | no | which of the pack's roles you offer; without `customer` there is no public sign-up. Leave out for all |
+| `roles` | no | which of the pack's roles you offer; without `customer` there is no public sign-up. Must include `admin`. Leave out for all |
 | `payment_methods` | no | which of the pack's payment methods you offer. Leave out for all |
 | `tenant_id` | no | stamped on accounts, merchants and jobs; default `default`. See [MULTI_TENANCY.md](MULTI_TENANCY.md) before changing it |
 | `overrides.terminology` | no | per locale, words that replace the pack's (`agent: rider`) |

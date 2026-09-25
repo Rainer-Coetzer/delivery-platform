@@ -319,6 +319,11 @@ func (b *Brand) Apply(p *packs.Pack, paymentMethods []string) error {
 	if err := p.Revalidate(); err != nil {
 		return fmt.Errorf("brand overrides for pack %s: %w", p.Name, err)
 	}
+	// Without admins nobody can add merchants or agents, or fix anything:
+	// a brand narrows the other roles, never this one.
+	if len(b.Roles) > 0 && !slices.Contains(b.Roles, "admin") {
+		return fmt.Errorf("brand roles %v: include admin; a platform can't be run without one", b.Roles)
+	}
 	for _, r := range b.Roles {
 		if !slices.Contains(p.Roles, r) {
 			return fmt.Errorf("brand roles: %q isn't a role pack %s has (%v)", r, p.Name, p.Roles)
