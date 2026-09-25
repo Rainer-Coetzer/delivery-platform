@@ -4,6 +4,8 @@
 package events
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -101,6 +103,21 @@ type Stop struct {
 	// Window is a booked time (scheduling module); nil means as soon as
 	// possible.
 	Window *TimeWindow `json:"window,omitempty"`
+	// Proof is what the agent must capture to complete the stop (proof
+	// module): photo, signature, pin or id_check. For pin, PinHash is how
+	// dispatch checks the code the customer gives; the PIN itself never
+	// leaves the jobs module.
+	Proof   string `json:"proof,omitempty"`
+	PinHash string `json:"pinHash,omitempty"`
+}
+
+// PinHash is how a delivery PIN travels and is checked: bound to the job
+// and stop, so a hash from one stop can't unlock another. It is not a
+// password hash: a 4-digit PIN falls to brute force whatever the hash, so
+// what protects it is the attempt limit dispatch enforces.
+func PinHash(jobID string, seq int, pin string) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s", jobID, seq, pin)))
+	return hex.EncodeToString(sum[:])
 }
 
 // TimeWindow is a booked slot, as UTC instants.
@@ -212,6 +229,15 @@ type StopCompletedData struct {
 	// DurationSeconds is assignment to this stop; reporting uses it on the
 	// last stop as the assignment time.
 	DurationSeconds int64 `json:"durationSeconds,omitempty"`
+	// Proof is what was captured at the stop, if it needed any.
+	Proof *ProofRef `json:"proof,omitempty"`
+}
+
+// ProofRef points at proof dispatch holds: its kind and where to fetch it
+// (GET /assignments/{assignmentId}/stops/{seq}/proof).
+type ProofRef struct {
+	Kind         string `json:"kind"` // photo, signature, pin, id_check, admin_override, simulated
+	AssignmentID string `json:"assignmentId"`
 }
 
 type AgentLocationData struct {

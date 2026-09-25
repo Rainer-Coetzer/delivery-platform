@@ -27,6 +27,11 @@ func (b *Bridge) Handle(ctx context.Context, env events.Envelope) error {
 		}
 		room = data.JobID
 	}
+	env, err := forClients(env)
+	if err != nil {
+		b.Log.Error("trim event for websocket broadcast", "topic", env.EventType, "error", err)
+		return nil
+	}
 	payload, err := json.Marshal(env)
 	if err != nil {
 		b.Log.Error("marshal event for websocket broadcast", "error", err)
@@ -34,4 +39,23 @@ func (b *Bridge) Handle(ctx context.Context, env events.Envelope) error {
 	}
 	b.Hub.Broadcast(room, payload)
 	return nil
+}
+
+// forClients trims an event to what a watcher may see. The step into
+// ready_for_dispatch carries the job's stops for dispatch, and with them
+// PIN hashes: a 4-digit PIN falls out of its hash in milliseconds, so an
+// agent watching the job could skip asking the customer. Watchers get the
+// state change only; the job itself (GET /jobs/{id}) shows each caller
+// what they may see.
+func forClients(env events.Envelope) (events.Envelope, error) {
+	if env.EventType != events.JobStatusChanged {
+		return env, nil
+	}
+	d, err := events.Decode[events.JobStatusChangedData](env)
+	if err != nil {
+		return env, err
+	}
+	d.Stops, d.Size, d.Requires = nil, nil, nil
+	env.Data, err = json.Marshal(d)
+	return env, err
 }

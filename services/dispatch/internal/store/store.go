@@ -4,11 +4,13 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
@@ -35,6 +37,7 @@ type Assignment struct {
 	JobID      string  `json:"jobId"`
 	AgentID    string  `json:"agentId"`
 	MerchantID string  `json:"merchantId,omitempty"`
+	CustomerID string  `json:"customerId,omitempty"`
 	PickupLat  float64 `json:"pickupLat"`
 	PickupLng  float64 `json:"pickupLng"`
 	DropoffLat float64 `json:"dropoffLat"`
@@ -61,6 +64,24 @@ type AssignmentStop struct {
 	Lng         float64    `json:"lng"`
 	Label       string     `json:"label,omitempty"`
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	// Proof is what completing this stop needs ("" for nothing).
+	Proof       string `json:"proof,omitempty"`
+	PinHash     string `json:"-"` // never sent: a 4-digit PIN falls out of its hash
+	PinAttempts int    `json:"pinAttempts,omitempty"`
+}
+
+// Proof is what an agent captured at a stop.
+type Proof struct {
+	ID           string          `json:"id"`
+	AssignmentID string          `json:"assignmentId"`
+	Seq          int             `json:"seq"`
+	Kind         string          `json:"kind"`
+	BlobKey      string          `json:"-"`
+	ContentType  string          `json:"contentType,omitempty"`
+	SizeBytes    int64           `json:"sizeBytes,omitempty"`
+	Details      json.RawMessage `json:"details,omitempty"`
+	SubmittedBy  string          `json:"submittedBy"`
+	CreatedAt    time.Time       `json:"createdAt"`
 }
 
 type Store struct{ pool *db.Pool }
@@ -204,18 +225,18 @@ func UpdateAgentLocation(ctx context.Context, q db.Queryer, id string, lat, lng 
 // InsertAssignment stores the assignment and every stop on its route.
 func InsertAssignment(ctx context.Context, tx pgx.Tx, d *Assignment, stops []events.Stop) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO assignments (id, job_id, agent_id, merchant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
+		INSERT INTO assignments (id, job_id, agent_id, merchant_id, customer_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
 			pickup_seq, dropoff_seq, status, eta_minutes)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-		d.ID, d.JobID, d.AgentID, nullStr(d.MerchantID), d.PickupLat, d.PickupLng, d.DropoffLat, d.DropoffLng,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		d.ID, d.JobID, d.AgentID, nullStr(d.MerchantID), nullStr(d.CustomerID), d.PickupLat, d.PickupLng, d.DropoffLat, d.DropoffLng,
 		d.PickupSeq, d.DropoffSeq, d.Status, d.EtaMinutes)
 	if err != nil {
 		return fmt.Errorf("insert assignment: %w", err)
 	}
 	for _, s := range stops {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO assignment_stops (assignment_id, seq, kind, lat, lng, label) VALUES ($1,$2,$3,$4,$5,$6)`,
-			d.ID, s.Seq, s.Kind, s.Location.Lat, s.Location.Lng, nullStr(s.Location.Label))
+			INSERT INTO assignment_stops (assignment_id, seq, kind, lat, lng, label, proof, pin_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+			d.ID, s.Seq, s.Kind, s.Location.Lat, s.Location.Lng, nullStr(s.Location.Label), nullStr(s.Proof), nullStr(s.PinHash))
 		if err != nil {
 			return fmt.Errorf("insert assignment %s stop %d: %w", d.ID, s.Seq, err)
 		}
@@ -226,7 +247,7 @@ func InsertAssignment(ctx context.Context, tx pgx.Tx, d *Assignment, stops []eve
 // Stops loads an assignment's route, in order.
 func Stops(ctx context.Context, q db.Queryer, assignmentID string) ([]AssignmentStop, error) {
 	rows, err := q.Query(ctx, `
-		SELECT seq, kind, lat, lng, coalesce(label,''), completed_at
+		SELECT seq, kind, lat, lng, coalesce(label,''), completed_at, coalesce(proof,''), coalesce(pin_hash,''), pin_attempts
 		FROM assignment_stops WHERE assignment_id = $1 ORDER BY seq`, assignmentID)
 	if err != nil {
 		return nil, fmt.Errorf("list stops of assignment %s: %w", assignmentID, err)
@@ -235,12 +256,76 @@ func Stops(ctx context.Context, q db.Queryer, assignmentID string) ([]Assignment
 	var out []AssignmentStop
 	for rows.Next() {
 		var s AssignmentStop
-		if err := rows.Scan(&s.Seq, &s.Kind, &s.Lat, &s.Lng, &s.Label, &s.CompletedAt); err != nil {
+		if err := rows.Scan(&s.Seq, &s.Kind, &s.Lat, &s.Lng, &s.Label, &s.CompletedAt, &s.Proof, &s.PinHash, &s.PinAttempts); err != nil {
 			return nil, fmt.Errorf("scan assignment stop: %w", err)
 		}
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// InsertProof records what was captured at a stop. A second proof for the
+// same stop is ErrProofExists.
+func InsertProof(ctx context.Context, tx pgx.Tx, p *Proof) error {
+	details := p.Details
+	if details == nil {
+		details = json.RawMessage("{}")
+	}
+	_, err := tx.Exec(ctx, `
+		INSERT INTO stop_proofs (id, assignment_id, seq, kind, blob_key, content_type, size_bytes, details, submitted_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		p.ID, p.AssignmentID, p.Seq, p.Kind, nullStr(p.BlobKey), nullStr(p.ContentType), nullInt(p.SizeBytes), details, p.SubmittedBy)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return ErrProofExists
+	}
+	if err != nil {
+		return fmt.Errorf("insert proof for stop %d of assignment %s: %w", p.Seq, p.AssignmentID, err)
+	}
+	return nil
+}
+
+// ErrProofExists: the stop already has its proof.
+var ErrProofExists = errors.New("stop already has proof")
+
+// GetProof returns the proof captured at a stop, or ErrNotFound.
+func GetProof(ctx context.Context, q db.Queryer, assignmentID string, seq int) (*Proof, error) {
+	p := &Proof{}
+	var blobKey, contentType *string
+	var size *int64
+	err := q.QueryRow(ctx, `
+		SELECT id, assignment_id, seq, kind, blob_key, content_type, size_bytes, details, submitted_by, created_at
+		FROM stop_proofs WHERE assignment_id = $1 AND seq = $2`, assignmentID, seq).
+		Scan(&p.ID, &p.AssignmentID, &p.Seq, &p.Kind, &blobKey, &contentType, &size, &p.Details, &p.SubmittedBy, &p.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get proof for stop %d of assignment %s: %w", seq, assignmentID, err)
+	}
+	if blobKey != nil {
+		p.BlobKey = *blobKey
+	}
+	if contentType != nil {
+		p.ContentType = *contentType
+	}
+	if size != nil {
+		p.SizeBytes = *size
+	}
+	return p, nil
+}
+
+// CountWrongPIN records one more wrong PIN at a stop and returns the total
+// so far. It commits with its own transaction's caller: a wrong guess must
+// count even though the request fails.
+func CountWrongPIN(ctx context.Context, tx pgx.Tx, assignmentID string, seq int) (int, error) {
+	var n int
+	err := tx.QueryRow(ctx, `UPDATE assignment_stops SET pin_attempts = pin_attempts + 1
+		WHERE assignment_id = $1 AND seq = $2 RETURNING pin_attempts`, assignmentID, seq).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count wrong PIN at stop %d of assignment %s: %w", seq, assignmentID, err)
+	}
+	return n, nil
 }
 
 // MarkStopDone records stop seq of an assignment as done now.
@@ -367,12 +452,12 @@ func UpdateETA(ctx context.Context, q db.Queryer, id string, etaMinutes int) err
 
 // baseSelect joins each assignment's next open stop. Callers that lock
 // must say FOR UPDATE OF a: the joined side can't be locked.
-const baseSelect = `SELECT a.id, a.job_id, coalesce(a.agent_id,''), coalesce(a.merchant_id,''), a.pickup_lat, a.pickup_lng,
+const baseSelect = `SELECT a.id, a.job_id, coalesce(a.agent_id,''), coalesce(a.merchant_id,''), coalesce(a.customer_id,''), a.pickup_lat, a.pickup_lng,
 	a.dropoff_lat, a.dropoff_lng, a.pickup_seq, a.dropoff_seq, a.status, a.simulated, a.eta_minutes,
-	n.seq, n.kind, n.lat, n.lng, n.label
+	n.seq, n.kind, n.lat, n.lng, n.label, n.proof
 	FROM assignments a
 	LEFT JOIN LATERAL (
-		SELECT seq, kind, lat, lng, coalesce(label,'') AS label FROM assignment_stops
+		SELECT seq, kind, lat, lng, coalesce(label,'') AS label, coalesce(proof,'') AS proof FROM assignment_stops
 		WHERE assignment_id = a.id AND completed_at IS NULL ORDER BY seq LIMIT 1
 	) n ON true`
 
@@ -381,13 +466,13 @@ type rowScanner interface{ Scan(dest ...any) error }
 func scanAssignment(row rowScanner) (*Assignment, error) {
 	d := &Assignment{}
 	var nSeq *int
-	var nKind, nLabel *string
+	var nKind, nLabel, nProof *string
 	var nLat, nLng *float64
-	err := row.Scan(&d.ID, &d.JobID, &d.AgentID, &d.MerchantID, &d.PickupLat, &d.PickupLng,
+	err := row.Scan(&d.ID, &d.JobID, &d.AgentID, &d.MerchantID, &d.CustomerID, &d.PickupLat, &d.PickupLng,
 		&d.DropoffLat, &d.DropoffLng, &d.PickupSeq, &d.DropoffSeq, &d.Status, &d.Simulated, &d.EtaMinutes,
-		&nSeq, &nKind, &nLat, &nLng, &nLabel)
+		&nSeq, &nKind, &nLat, &nLng, &nLabel, &nProof)
 	if err == nil && nSeq != nil {
-		d.Next = &AssignmentStop{Seq: *nSeq, Kind: *nKind, Lat: *nLat, Lng: *nLng, Label: *nLabel}
+		d.Next = &AssignmentStop{Seq: *nSeq, Kind: *nKind, Lat: *nLat, Lng: *nLng, Label: *nLabel, Proof: *nProof}
 	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -415,6 +500,8 @@ type Route struct {
 	// Stops is the whole route in order (multi-stop jobs have more than
 	// the pickup and dropoff above).
 	Stops []events.Stop
+	// CustomerID is who may see the proof captured on the route.
+	CustomerID string
 	// Scheduling module: don't assign before this (the pickup window
 	// opening, less the lead time). Nil: as soon as an agent is free.
 	NotBefore *time.Time
@@ -427,10 +514,10 @@ type Route struct {
 func InsertPending(ctx context.Context, tx pgx.Tx, p *Route) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO pending_assignments (job_id, merchant_id, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq,
-			weight_g, volume_cm3, requires, stops, not_before)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT (job_id) DO NOTHING`,
+			weight_g, volume_cm3, requires, stops, not_before, customer_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT (job_id) DO NOTHING`,
 		p.JobID, nullStr(p.MerchantID), p.PickupLat, p.PickupLng, p.DropoffLat, p.DropoffLng, p.PickupSeq, p.DropoffSeq,
-		p.WeightGrams, p.VolumeCm3, capabilities(p.Requires), stopsJSON(p.Stops), p.NotBefore)
+		p.WeightGrams, p.VolumeCm3, capabilities(p.Requires), stopsJSON(p.Stops), p.NotBefore, nullStr(p.CustomerID))
 	if err != nil {
 		return fmt.Errorf("insert pending assignment: %w", err)
 	}
@@ -449,7 +536,7 @@ func DeletePending(ctx context.Context, tx pgx.Tx, jobID string) error {
 // ones wait until their not_before.
 func (s *Store) ListPending(ctx context.Context) ([]*Route, error) {
 	rows, err := s.pool.Query(ctx, `SELECT job_id, coalesce(merchant_id,''), pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq,
-		weight_g, volume_cm3, requires, stops, not_before
+		weight_g, volume_cm3, requires, stops, not_before, coalesce(customer_id,'')
 		FROM pending_assignments WHERE not_before IS NULL OR not_before <= now() ORDER BY created_at`)
 	if err != nil {
 		return nil, fmt.Errorf("list pending assignments: %w", err)
@@ -459,7 +546,7 @@ func (s *Store) ListPending(ctx context.Context) ([]*Route, error) {
 	for rows.Next() {
 		p := &Route{}
 		if err := rows.Scan(&p.JobID, &p.MerchantID, &p.PickupLat, &p.PickupLng, &p.DropoffLat, &p.DropoffLng, &p.PickupSeq, &p.DropoffSeq,
-			&p.WeightGrams, &p.VolumeCm3, &p.Requires, &p.Stops, &p.NotBefore); err != nil {
+			&p.WeightGrams, &p.VolumeCm3, &p.Requires, &p.Stops, &p.NotBefore, &p.CustomerID); err != nil {
 			return nil, fmt.Errorf("scan pending assignment: %w", err)
 		}
 		out = append(out, p)

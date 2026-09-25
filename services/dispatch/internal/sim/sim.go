@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
@@ -170,6 +171,20 @@ func (s *LocationSimulator) advance(ctx context.Context, d *store.Assignment, ta
 // next stop. Losing a race to a real agent (ErrWrongState) is fine and not
 // worth an error log.
 func (s *LocationSimulator) autopilot(ctx context.Context, d *store.Assignment) {
+	if d.Next.Proof != "" {
+		// Recorded as "simulated", never as the kind the stop asked for,
+		// so a demo proof can't pass for a real one in a report.
+		err := s.Pool.WithTx(ctx, func(tx pgx.Tx) error {
+			return store.InsertProof(ctx, tx, &store.Proof{
+				ID: uuid.NewString(), AssignmentID: d.ID, Seq: d.Next.Seq, Kind: "simulated",
+				Details: json.RawMessage(`{"autopilot": true, "stood in for": "` + d.Next.Proof + `"}`), SubmittedBy: "autopilot",
+			})
+		})
+		if err != nil && !errors.Is(err, store.ErrProofExists) {
+			s.Log.Error("autopilot proof failed", "jobId", d.JobID, "seq", d.Next.Seq, "error", err)
+			return
+		}
+	}
 	err := progress.CompleteStop(ctx, s.Pool, d.ID, d.Next.Seq)
 	switch {
 	case err == nil:

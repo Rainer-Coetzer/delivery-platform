@@ -87,8 +87,9 @@ func RouteFor(data events.JobStatusChangedData) (*store.Route, error) {
 		JobID: data.JobID, MerchantID: pickup.MerchantID,
 		PickupLat: pickup.Location.Lat, PickupLng: pickup.Location.Lng, PickupSeq: pickup.Seq,
 		DropoffLat: last.Location.Lat, DropoffLng: last.Location.Lng, DropoffSeq: last.Seq,
-		Requires: data.Requires,
-		Stops:    data.Stops,
+		Requires:   data.Requires,
+		Stops:      data.Stops,
+		CustomerID: data.CustomerID,
 	}
 	if data.Size != nil {
 		r.WeightGrams, r.VolumeCm3 = data.Size.WeightGrams, data.Size.VolumeCm3
@@ -237,7 +238,7 @@ func (d *Dispatcher) TryAssign(ctx context.Context, tx pgx.Tx, r *store.Route) (
 
 	eta := d.ETA.Minutes(agent.DistanceMeters, agent.Vehicle)
 	assignment := &store.Assignment{
-		ID: uuid.NewString(), JobID: jobID, AgentID: agent.ID, MerchantID: r.MerchantID,
+		ID: uuid.NewString(), JobID: jobID, AgentID: agent.ID, MerchantID: r.MerchantID, CustomerID: r.CustomerID,
 		PickupLat: r.PickupLat, PickupLng: r.PickupLng, DropoffLat: r.DropoffLat, DropoffLng: r.DropoffLng,
 		PickupSeq: r.PickupSeq, DropoffSeq: r.DropoffSeq,
 		Status: progress.StatusAssigned, EtaMinutes: eta,

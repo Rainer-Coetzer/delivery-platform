@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -30,6 +31,7 @@ import (
 
 	packfs "github.com/rainercoetzer/delivery-platform/packs"
 	"github.com/rainercoetzer/delivery-platform/pkg/auth"
+	"github.com/rainercoetzer/delivery-platform/pkg/blob"
 	"github.com/rainercoetzer/delivery-platform/pkg/config"
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
@@ -98,6 +100,9 @@ type Deps struct {
 	// Strategies are the pack's pricing, dispatch, ETA, payment and notify
 	// choices, already built.
 	Strategies *Strategies
+	// Blobs stores uploaded files (proof, documents); nil when the pack
+	// has neither module.
+	Blobs blob.Store
 }
 
 // Options for Run.
@@ -149,6 +154,10 @@ func run(log *slog.Logger, opts Options) error {
 		return err
 	}
 	log.Info("pack loaded", "pack", pack.Name, "modules", pack.Modules, "payment", strategies.Payments.Methods())
+	blobs, err := openBlobs(pack)
+	if err != nil {
+		return err
+	}
 	needsDB := false
 	for _, d := range opts.Definitions {
 		needsDB = needsDB || d.Migrations != nil
@@ -174,7 +183,7 @@ func run(log *slog.Logger, opts Options) error {
 	router := chi.NewRouter()
 	router.Use(middleware.Recoverer)
 	router.Use(httpx.RequestLogger(opts.Name, log))
-	router.Use(maxBody(1 << 20))
+	router.Use(maxBody(1<<20, isUpload))
 	router.Get("/metrics", obs.MetricsHandler().ServeHTTP)
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
@@ -206,7 +215,7 @@ func run(log *slog.Logger, opts Options) error {
 	defer cancelRun()
 
 	for _, def := range opts.Definitions {
-		deps := Deps{Log: log.With("module", def.Name), Bus: b, Issuer: issuer, Auth: issuer.Middleware, HTTP: httpClient, URL: urlFor, Embedded: opts.Embedded, Pack: pack, Strategies: strategies}
+		deps := Deps{Log: log.With("module", def.Name), Bus: b, Issuer: issuer, Auth: issuer.Middleware, HTTP: httpClient, URL: urlFor, Embedded: opts.Embedded, Pack: pack, Strategies: strategies, Blobs: blobs}
 		if def.Migrations != nil {
 			pool, err := openModuleDB(ctx, dsn, def, opts.Embedded)
 			if err != nil {
@@ -272,6 +281,23 @@ func run(log *slog.Logger, opts Options) error {
 	return nil
 }
 
+// openBlobs opens the file store when the pack keeps files. BLOB_DIR is
+// required outside dev: files written to a container's own filesystem
+// vanish with the container, and nobody notices until they're needed.
+func openBlobs(p *packs.Pack) (blob.Store, error) {
+	if !p.Has(packs.ModProof) && !p.Has(packs.ModDocuments) {
+		return nil, nil
+	}
+	dir := os.Getenv("BLOB_DIR")
+	if dir == "" {
+		if !config.IsDev() {
+			return nil, errors.New("BLOB_DIR is required: pack " + p.Name + " stores files (proof or documents); point it at a persistent volume")
+		}
+		dir = filepath.Join("data", "blobs")
+	}
+	return blob.NewLocal(dir)
+}
+
 // LoadPack loads the pack named by PACK (default food): from PACKS_DIR
 // when set, otherwise from the packs embedded in the binary. In the `full`
 // profile every service must be given the same PACK; they each load it.
@@ -333,13 +359,27 @@ func readiness(pools []*db.Pool) http.HandlerFunc {
 }
 
 // maxBody caps request bodies. Every JSON body in this API is small; this
-// stops a client from streaming gigabytes into a decoder. Uploads (the
-// documents and proof modules, later) will need their own limit.
-func maxBody(n int64) func(http.Handler) http.Handler {
+// stops a client from streaming gigabytes into a decoder. Uploads are the
+// exception, and each upload handler caps its body itself, at the size the
+// pack's settings allow (blob.Store.Put's max).
+func maxBody(n int64, exempt func(*http.Request) bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r.Body = http.MaxBytesReader(w, r.Body, n)
+			if !exempt(r) {
+				r.Body = http.MaxBytesReader(w, r.Body, n)
+			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// isUpload is the upload routes: proof on an assignment stop and
+// documents on a job. Keep in step with those modules' routes.
+func isUpload(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	p := r.URL.Path
+	return (strings.HasPrefix(p, "/assignments/") && strings.HasSuffix(p, "/proof")) ||
+		(strings.HasPrefix(p, "/jobs/") && strings.HasSuffix(p, "/documents"))
 }

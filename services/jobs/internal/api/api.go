@@ -162,6 +162,12 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, err.Error())
 		return
 	}
+	jobID := uuid.NewString()
+	if err := domain.RequireProof(jobID, plan.stops, a.Pack.Job.Proof, domain.NewPIN); err != nil {
+		a.Log.Error("require proof", "error", err)
+		httpx.Internal(w, "could not create job")
+		return
+	}
 
 	openJobs, err := a.Store.CountOpen(ctx, plan.merchantID)
 	if err != nil {
@@ -191,7 +197,7 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 
 	m := a.Pack.Lifecycle
 	job := &domain.Job{
-		ID:               uuid.NewString(),
+		ID:               jobID,
 		Pack:             a.Pack.Name,
 		CustomerID:       caller.UserID,
 		CustomerName:     caller.Name,
@@ -238,6 +244,7 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
 		httpx.Internal(w, "could not create job")
 		return
 	}
+	present(job, caller)
 	httpx.WriteJSON(w, http.StatusCreated, job)
 }
 
@@ -349,7 +356,22 @@ func (a *API) getJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.fillActions(job, caller)
+	present(job, caller)
 	httpx.WriteJSON(w, http.StatusOK, job)
+}
+
+// present strips what the caller mustn't see from a job about to be sent:
+// delivery PINs for anyone but the job's customer and admins (the agent
+// has to hear it from the customer; that's the point), and PIN hashes for
+// everyone, since a 4-digit PIN falls straight out of its hash.
+func present(job *domain.Job, caller *auth.Claims) {
+	showPIN := caller.IsAdmin() || (caller.Role == auth.RoleCustomer && caller.UserID == job.CustomerID)
+	for i := range job.Stops {
+		job.Stops[i].PinHash = ""
+		if !showPIN {
+			job.Stops[i].PIN = ""
+		}
+	}
 }
 
 // fillActions tells the caller what they may do with the job next.
@@ -443,6 +465,7 @@ func (a *API) personMove(w http.ResponseWriter, r *http.Request, caller *auth.Cl
 		httpx.Internal(w, "could not update job")
 	default:
 		a.fillActions(job, caller)
+		present(job, caller)
 		httpx.WriteJSON(w, http.StatusOK, job)
 	}
 }

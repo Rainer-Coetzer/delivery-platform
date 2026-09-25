@@ -25,6 +25,9 @@ func TestRouteRoles(t *testing.T) {
 		{"customer reports a location", customer, "PATCH", "/agents/drv1/location", `{"lat":1,"lng":1}`, 403},
 		{"merchant sets agent status", merchant, "PATCH", "/agents/drv1/status", status, 403},
 		{"no token completes a stop", nil, "POST", "/assignments/a1/stops/0/completed", "", 401},
+		{"no token sends proof", nil, "POST", "/assignments/a1/stops/0/proof", "", 401},
+		{"no token views proof", nil, "GET", "/assignments/a1/stops/0/proof", "", 401},
+		{"proof on a pack without the module", drv1, "POST", "/assignments/a1/stops/0/proof", "", 404},
 		{"stop number isn't a number", drv1, "POST", "/assignments/a1/stops/first/completed", "", 400},
 		{"agent registers with negative capacity", &auth.Claims{Role: auth.RoleAdmin}, "POST", "/agents", `{"name":"x","capacityGrams":-1}`, 400},
 	}, func(c *auth.Claims) func(chi.Router) { return (&API{Auth: as(c)}).Routes })

@@ -58,10 +58,10 @@ func Create(ctx context.Context, tx pgx.Tx, j *domain.Job, initial string, settl
 	}
 	for _, s := range j.Stops {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO job_stops (job_id, seq, kind, lat, lng, label, merchant_id, window_start, window_end)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			INSERT INTO job_stops (job_id, seq, kind, lat, lng, label, merchant_id, window_start, window_end, proof, pin, pin_hash)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 			j.ID, s.Seq, s.Kind, s.Location.Lat, s.Location.Lng, nullStr(s.Location.Label), nullStr(s.MerchantID),
-			windowStart(s.Window), windowEnd(s.Window))
+			windowStart(s.Window), windowEnd(s.Window), nullStr(s.Proof), nullStr(s.PIN), nullStr(s.PinHash))
 		if err != nil {
 			return fmt.Errorf("insert job stop %d: %w", s.Seq, err)
 		}
@@ -143,8 +143,13 @@ func Save(ctx context.Context, tx pgx.Tx, j *domain.Job, steps []lifecycle.Step)
 }
 
 // MarkStopCompleted persists what domain.Job.CompleteStop decided.
-func MarkStopCompleted(ctx context.Context, tx pgx.Tx, jobID string, seq int, at time.Time) error {
-	tag, err := tx.Exec(ctx, `UPDATE job_stops SET completed_at=$3 WHERE job_id=$1 AND seq=$2 AND completed_at IS NULL`, jobID, seq, at)
+func MarkStopCompleted(ctx context.Context, tx pgx.Tx, jobID string, seq int, at time.Time, proof *events.ProofRef) error {
+	var kind, by any
+	if proof != nil {
+		kind, by = proof.Kind, proof.AssignmentID
+	}
+	tag, err := tx.Exec(ctx, `UPDATE job_stops SET completed_at=$3, captured_proof=$4, captured_by_assignment=$5
+		WHERE job_id=$1 AND seq=$2 AND completed_at IS NULL`, jobID, seq, at, kind, by)
 	if err != nil {
 		return fmt.Errorf("complete stop %d of job %s: %w", seq, jobID, err)
 	}
@@ -204,7 +209,8 @@ func items(ctx context.Context, q queryer, jobID string) ([]domain.Item, error) 
 
 func stops(ctx context.Context, q queryer, jobID string) ([]domain.Stop, error) {
 	rows, err := q.Query(ctx, `
-		SELECT seq, kind, lat, lng, coalesce(label,''), coalesce(merchant_id,''), completed_at, window_start, window_end
+		SELECT seq, kind, lat, lng, coalesce(label,''), coalesce(merchant_id,''), completed_at, window_start, window_end,
+			coalesce(proof,''), coalesce(pin,''), coalesce(pin_hash,''), coalesce(captured_proof,''), coalesce(captured_by_assignment,'')
 		FROM job_stops WHERE job_id = $1 ORDER BY seq`, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("list job stops: %w", err)
@@ -214,8 +220,13 @@ func stops(ctx context.Context, q queryer, jobID string) ([]domain.Stop, error) 
 	for rows.Next() {
 		var s domain.Stop
 		var start, end *time.Time
-		if err := rows.Scan(&s.Seq, &s.Kind, &s.Location.Lat, &s.Location.Lng, &s.Location.Label, &s.MerchantID, &s.CompletedAt, &start, &end); err != nil {
+		var captured, capturedBy string
+		if err := rows.Scan(&s.Seq, &s.Kind, &s.Location.Lat, &s.Location.Lng, &s.Location.Label, &s.MerchantID, &s.CompletedAt, &start, &end,
+			&s.Proof, &s.PIN, &s.PinHash, &captured, &capturedBy); err != nil {
 			return nil, fmt.Errorf("scan job stop: %w", err)
+		}
+		if captured != "" {
+			s.CapturedProof = &events.ProofRef{Kind: captured, AssignmentID: capturedBy}
 		}
 		if start != nil && end != nil {
 			s.Window = &events.TimeWindow{Start: start.UTC(), End: end.UTC()}

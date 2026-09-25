@@ -26,6 +26,10 @@ const (
 	StatusCancelled = "CANCELLED"
 )
 
+// ErrProofMissing: the stop needs proof (the pack's job.proof) and none
+// has been captured yet.
+var ErrProofMissing = errors.New("stop needs proof first")
+
 // ErrWrongState means the assignment can't take this step: it's finished,
 // or the stop isn't the next one (an agent tapping "delivered" twice, the
 // autopilot racing a real agent, a stop skipped). Callers treat it as a
@@ -57,6 +61,17 @@ func CompleteStop(ctx context.Context, pool *db.Pool, id string, seq int) error 
 			return err
 		}
 		last := seq == stops[len(stops)-1].Seq
+		var ref *events.ProofRef
+		if need := d.Next.Proof; need != "" {
+			p, err := store.GetProof(ctx, tx, id, seq)
+			if errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("%w: stop %d of assignment %s needs a %s", ErrProofMissing, seq, id, need)
+			}
+			if err != nil {
+				return err
+			}
+			ref = &events.ProofRef{Kind: p.Kind, AssignmentID: id}
+		}
 
 		if err := store.MarkStopDone(ctx, tx, id, seq); err != nil {
 			return err
@@ -70,7 +85,7 @@ func CompleteStop(ctx context.Context, pool *db.Pool, id string, seq int) error 
 			return err
 		}
 
-		data := events.StopCompletedData{JobID: d.JobID, AssignmentID: d.ID, AgentID: d.AgentID, StopSeq: seq}
+		data := events.StopCompletedData{JobID: d.JobID, AssignmentID: d.ID, AgentID: d.AgentID, StopSeq: seq, Proof: ref}
 		if last {
 			if err := store.MarkAgentAvailable(ctx, tx, d.AgentID); err != nil {
 				return err

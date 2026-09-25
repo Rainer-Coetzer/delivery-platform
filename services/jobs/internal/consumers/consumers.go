@@ -70,10 +70,10 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 			if err != nil {
 				return err
 			}
-			if trigger.Stop, err = j.CompleteStop(data.StopSeq, env.Timestamp); err != nil {
+			if trigger.Stop, err = j.CompleteStop(data.StopSeq, env.Timestamp, data.Proof); err != nil {
 				return bus.Permanent(err) // a stop the job doesn't have, or one already done: a retry can't fix it
 			}
-			if err := store.MarkStopCompleted(ctx, tx, j.ID, data.StopSeq, env.Timestamp); err != nil {
+			if err := store.MarkStopCompleted(ctx, tx, j.ID, data.StopSeq, env.Timestamp, data.Proof); err != nil {
 				return err
 			}
 		}

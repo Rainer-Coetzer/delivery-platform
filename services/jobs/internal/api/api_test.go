@@ -114,3 +114,31 @@ func foodStrategies(t *testing.T) *app.Strategies {
 	}
 	return s
 }
+
+// Only the job's customer (and admins) see a delivery PIN; nobody gets the
+// hash, which gives the PIN away.
+func TestPresentHidesPINs(t *testing.T) {
+	job := func() *domain.Job {
+		return &domain.Job{CustomerID: "c1", Stops: []domain.Stop{
+			{Stop: events.Stop{Seq: 1, Kind: "dropoff", Proof: "pin", PinHash: "abc"}, PIN: "0427"},
+		}}
+	}
+	cases := []struct {
+		name    string
+		caller  auth.Claims
+		seesPIN bool
+	}{
+		{"the customer", auth.Claims{UserID: "c1", Role: auth.RoleCustomer}, true},
+		{"an admin", auth.Claims{Role: auth.RoleAdmin}, true},
+		{"the agent", auth.Claims{Role: auth.RoleAgent, RefID: "a1"}, false},
+		{"the merchant", auth.Claims{Role: auth.RoleMerchant, RefID: "m1"}, false},
+		{"another customer", auth.Claims{UserID: "c2", Role: auth.RoleCustomer}, false},
+	}
+	for _, c := range cases {
+		j := job()
+		present(j, &c.caller)
+		if (j.Stops[0].PIN != "") != c.seesPIN || j.Stops[0].PinHash != "" {
+			t.Errorf("%s: pin %q hash %q", c.name, j.Stops[0].PIN, j.Stops[0].PinHash)
+		}
+	}
+}

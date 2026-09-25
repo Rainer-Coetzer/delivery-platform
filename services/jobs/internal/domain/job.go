@@ -37,6 +37,13 @@ type Item struct {
 type Stop struct {
 	events.Stop
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	// PIN is the code the customer gives the agent at this stop (proof
+	// module). Only the job's customer and admins may see it: the API
+	// strips it for everyone else, and PinHash for everyone.
+	PIN string `json:"pin,omitempty"`
+	// CapturedProof is what the agent captured here, and where dispatch
+	// keeps it.
+	CapturedProof *events.ProofRef `json:"capturedProof,omitempty"`
 }
 
 // Job is returned directly by the REST API (see internal/api), so its
@@ -126,7 +133,7 @@ func (j *Job) Terminal() bool {
 // CompleteStop marks stop seq done at `at` and returns the stop context
 // lifecycle triggers filter on. Completing a stop twice is refused: the
 // agent app retrying must not move the job twice.
-func (j *Job) CompleteStop(seq int, at time.Time) (lifecycle.StopInfo, error) {
+func (j *Job) CompleteStop(seq int, at time.Time, proof *events.ProofRef) (lifecycle.StopInfo, error) {
 	idx := -1
 	for i, s := range j.Stops {
 		if s.Seq == seq {
@@ -140,6 +147,7 @@ func (j *Job) CompleteStop(seq int, at time.Time) (lifecycle.StopInfo, error) {
 		return lifecycle.StopInfo{}, fmt.Errorf("job %s: stop %d is already completed", j.ID, seq)
 	}
 	j.Stops[idx].CompletedAt = &at
+	j.Stops[idx].CapturedProof = proof
 	return lifecycle.StopInfo{FirstPickup: seq == j.firstPickupSeq(), LastStop: seq == j.lastSeq()}, nil
 }
 

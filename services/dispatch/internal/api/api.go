@@ -14,8 +14,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/auth"
+	"github.com/rainercoetzer/delivery-platform/pkg/blob"
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
+	"github.com/rainercoetzer/delivery-platform/pkg/packs"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/progress"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/store"
 )
@@ -26,6 +28,9 @@ type API struct {
 	Log   *slog.Logger
 	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
 	Auth func(http.Handler) http.Handler
+	// Proof module: nil when the pack has none. Blobs holds the images.
+	Proof *packs.ProofSettings
+	Blobs blob.Store
 }
 
 func (a *API) Routes(r chi.Router) {
@@ -45,6 +50,8 @@ func (a *API) Routes(r chi.Router) {
 		r.Use(a.Auth)
 		r.Get("/{jobId}", a.getAssignment)
 		r.Post("/{id}/stops/{seq}/completed", a.stopCompleted)
+		r.Post("/{id}/stops/{seq}/proof", a.submitProof)
+		r.Get("/{id}/stops/{seq}/proof", a.getProof)
 		// Shortcuts for two-stop jobs (and today's app): the first stop,
 		// and the last. On a multi-stop route "completed" is refused
 		// while stops remain.
@@ -234,6 +241,8 @@ func (a *API) completeStop(w http.ResponseWriter, r *http.Request, which func(*s
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		httpx.NotFound(w, "assignment not found")
+	case errors.Is(err, progress.ErrProofMissing):
+		httpx.Conflict(w, err.Error())
 	case errors.Is(err, progress.ErrWrongState):
 		next := "none: the assignment is finished"
 		if d.Next != nil {

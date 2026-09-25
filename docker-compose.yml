@@ -83,9 +83,12 @@ services:
       <<: *app-env
       DATABASE_URL: postgres://platform:platform@postgres:5432/platform?sslmode=disable
       EVENTS_BUS: inprocess
+      BLOB_DIR: /data/blobs # proof photos and documents; back it up with the database
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+    volumes:
+      - blobs:/data/blobs
     depends_on:
       postgres: { condition: service_healthy }
     healthcheck:
@@ -195,6 +198,9 @@ services:
       <<: *service-env
       DATABASE_URL: postgres://jobs:jobs@postgres:5432/jobs_db?sslmode=disable
       MERCHANT_SERVICE_URL: http://merchant-service:8080
+      BLOB_DIR: /data/blobs # job documents
+    volumes:
+      - job_blobs:/data/blobs
 
   payment-service:
     <<: *go-service
@@ -209,6 +215,9 @@ services:
     environment:
       <<: *service-env
       DATABASE_URL: postgres://dispatch:dispatch@postgres:5432/dispatch_db?sslmode=disable
+      BLOB_DIR: /data/blobs # proof photos and signatures
+    volumes:
+      - dispatch_blobs:/data/blobs
 
   notification-service:
     <<: *go-service
@@ -287,3 +296,6 @@ services:
 volumes:
   pgdata:
   caddy_data:
+  blobs:          # lite: every module's files
+  job_blobs:      # full: jobs-service's documents
+  dispatch_blobs: # full: dispatch-service's proof

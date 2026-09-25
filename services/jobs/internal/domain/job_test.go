@@ -51,20 +51,20 @@ func TestJob_StopsDriveTransit(t *testing.T) {
 	j.Status, j.Milestone = "READY", lifecycle.ReadyForDispatch
 	now := time.Now()
 
-	info, err := j.CompleteStop(0, now)
+	info, err := j.CompleteStop(0, now, nil)
 	if err != nil || !info.FirstPickup || info.LastStop {
 		t.Fatalf("stop 0 is the first pickup and not the last: %+v %v", info, err)
 	}
 	if _, err := j.Apply(m, lifecycle.Trigger{Event: events.DispatchStopCompleted, Stop: info}, ""); err != nil || j.Milestone != lifecycle.InTransit {
 		t.Fatalf("pickup should put the job in transit: %s %v", j.Milestone, err)
 	}
-	if _, err := j.CompleteStop(0, now); err == nil {
+	if _, err := j.CompleteStop(0, now, nil); err == nil {
 		t.Fatal("completing a stop twice must be refused")
 	}
-	if _, err := j.CompleteStop(7, now); !errors.Is(err, ErrNoSuchStop) {
+	if _, err := j.CompleteStop(7, now, nil); !errors.Is(err, ErrNoSuchStop) {
 		t.Fatalf("unknown stop: %v", err)
 	}
-	info, _ = j.CompleteStop(1, now)
+	info, _ = j.CompleteStop(1, now, nil)
 	if _, err := j.Apply(m, lifecycle.Trigger{Event: events.DispatchStopCompleted, Stop: info}, ""); err != nil || j.Status != "DELIVERED" || !j.Terminal() {
 		t.Fatalf("last stop should complete the job: %s %v", j.Status, err)
 	}
