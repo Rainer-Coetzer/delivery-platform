@@ -5,10 +5,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -180,5 +182,46 @@ func TestRightPINAndIDCheck(t *testing.T) {
 	}
 	if code := post("/stops/1/completed", "", ""); code != 200 {
 		t.Fatalf("drop: %d", code)
+	}
+}
+
+// A burst of parallel wrong guesses must not get past the attempt limit:
+// the tries are counted one at a time under a row lock.
+func TestPINLimitHoldsUnderParallelGuesses(t *testing.T) {
+	pool := dbtest.New(t, migrations.FS)
+	id, _ := assignedJob(t, pool)
+	ctx := context.Background()
+	// Get to the PIN stop: the pickup's photo, then the pickup.
+	if err := pool.WithTx(ctx, func(tx pgx.Tx) error {
+		return store.InsertProof(ctx, tx, &store.Proof{ID: uuid.NewString(), AssignmentID: id, Seq: 0, Kind: "photo", SubmittedBy: "t"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := progress.CompleteStop(ctx, pool, id, 0); err != nil {
+		t.Fatal(err)
+	}
+	agent := &auth.Claims{UserID: "u-agent", Role: auth.RoleAgent, RefID: "a1"}
+	a := &API{Pool: pool, Store: store.New(pool), Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Auth: as(agent),
+		Proof: &packs.ProofSettings{PinAttempts: 3, MaxPhotoBytes: 64}}
+	r := chi.NewRouter()
+	a.Routes(r)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			req := httptest.NewRequest("POST", "/assignments/"+id+"/stops/1/proof", strings.NewReader(fmt.Sprintf(`{"pin":"9%03d"}`, i)))
+			req.Header.Set("Content-Type", "application/json")
+			r.ServeHTTP(httptest.NewRecorder(), req)
+		}(i)
+	}
+	wg.Wait()
+	var tries int
+	if err := pool.QueryRow(ctx, `SELECT pin_attempts FROM assignment_stops WHERE assignment_id = $1 AND seq = 1`, id).Scan(&tries); err != nil {
+		t.Fatal(err)
+	}
+	if tries != 3 {
+		t.Fatalf("20 parallel guesses counted %d tries; the limit is 3", tries)
 	}
 }

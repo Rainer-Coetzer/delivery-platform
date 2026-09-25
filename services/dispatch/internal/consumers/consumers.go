@@ -246,6 +246,25 @@ func (d *Dispatcher) TryAssign(ctx context.Context, tx pgx.Tx, r *store.Route) (
 // concurrent assignment.
 var ErrAgentNotAvailable = errors.New("agent is not available")
 
+// ErrAgentDoesNotFit: with the capacity module on, the chosen agent's
+// vehicle can't carry the job or lacks a capability it needs. The same
+// rule automatic dispatch applies, so a person can't overload a bike.
+var ErrAgentDoesNotFit = errors.New("the agent's vehicle doesn't fit the job")
+
+// fits is the capacity rule, in Go, for an agent a person chose (automatic
+// dispatch filters the same way in SQL).
+func fits(a *store.Agent, r *store.Route) bool {
+	if a.CapacityGrams < r.WeightGrams || a.CapacityCm3 < r.VolumeCm3 || a.CapacityGrams <= 0 {
+		return false
+	}
+	for _, need := range r.Requires {
+		if !slices.Contains(a.Capabilities, need) {
+			return false
+		}
+	}
+	return true
+}
+
 // AssignAgent hands a queued job to a chosen agent: an admin assigning by
 // hand, or the agent who accepted its offer. The caller has locked the job
 // (store.LockJob) and holds its queue row.
@@ -258,6 +277,10 @@ func (d *Dispatcher) AssignAgent(ctx context.Context, tx pgx.Tx, r *store.Route,
 	a, err := store.GetAgentTx(ctx, tx, agentID)
 	if err != nil {
 		return err
+	}
+	if d.Capacity && !fits(a, r) {
+		return fmt.Errorf("%w: needs %d g, %d cm3 and %v; the vehicle takes %d g, %d cm3 with %v",
+			ErrAgentDoesNotFit, r.WeightGrams, r.VolumeCm3, r.Requires, a.CapacityGrams, a.CapacityCm3, a.Capabilities)
 	}
 	c := &store.Candidate{Agent: *a, DistanceMeters: geo.HaversineMeters(a.Lat, a.Lng, r.PickupLat, r.PickupLng)}
 	if err := d.assign(ctx, tx, r, c); err != nil {

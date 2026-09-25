@@ -14,6 +14,7 @@ import (
 
 	"github.com/rainercoetzer/delivery-platform/pkg/app"
 	"github.com/rainercoetzer/delivery-platform/pkg/config"
+	"github.com/rainercoetzer/delivery-platform/pkg/packs"
 	"github.com/rainercoetzer/delivery-platform/services/merchant/internal/api"
 	"github.com/rainercoetzer/delivery-platform/services/merchant/internal/consumers"
 	"github.com/rainercoetzer/delivery-platform/services/merchant/internal/migrations"
@@ -29,6 +30,13 @@ var Definition = app.Definition{
 }
 
 func newModule(d app.Deps) (*app.Module, error) {
+	// Merchants and their catalogues are the catalogue module. A pack
+	// without it (courier, freight) gets no merchant routes, consumers or
+	// autopilot: nothing to serve, and nothing to react to.
+	if !d.Pack.Has(packs.ModCatalogue) {
+		d.Log.Info("catalogue module off in this pack: merchant module idle", "pack", d.Pack.Name)
+		return &app.Module{}, nil
+	}
 	st := store.New(d.Pool)
 	h := &consumers.Handlers{Pool: d.Pool, Log: d.Log}
 	m := &app.Module{
@@ -36,7 +44,7 @@ func newModule(d app.Deps) (*app.Module, error) {
 		Outbox:    true,
 		Consumers: []app.Consumer{{Group: "merchant-service", Topics: consumers.Topics, Handler: h.Handle}},
 	}
-	autopilot, err := config.Bool("DEMO_AUTOPILOT", false)
+	autopilot, err := config.DemoAutopilot()
 	if err != nil {
 		return nil, err
 	}

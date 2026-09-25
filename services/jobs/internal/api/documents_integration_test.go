@@ -3,11 +3,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 
@@ -95,5 +97,44 @@ func TestDocuments(t *testing.T) {
 	}
 	if c, _, _ := do(customer, "GET", "/documents/nope", "", ""); c != 404 {
 		t.Fatalf("unknown document: %d", c)
+	}
+}
+
+// max_per_job holds when uploads race: the count and the insert happen
+// under the job's lock.
+func TestDocumentLimitHoldsUnderParallelUploads(t *testing.T) {
+	pack := strings.NewReplacer(
+		"name: parcel", "name: docs",
+		"modules: [packages, capacity]", "modules: [packages, capacity, documents]",
+	).Replace(parcelPack) + "  documents: { max_bytes: 32, max_per_job: 2, allowed_types: [application/pdf] }\n"
+	p, err := packs.Load(fstest.MapFS{"docs/pack.yaml": {Data: []byte(pack)}, "docs/lifecycle.yaml": {Data: []byte(parcelLifecycle)}},
+		"docs", lifecycle.Known{Events: events.AllTopics, Roles: []string{"customer", "merchant", "agent", "admin"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobs, err := blob.NewLocal(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := dbtest.New(t, migrations.FS)
+	id := storedJob(t, pool, "BOOKED", lifecycle.Created)
+	a := &API{Pool: pool, Store: store.New(pool), Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Auth: as(&auth.Claims{UserID: "c1", Role: auth.RoleCustomer}), Pack: p, Blobs: blobs}
+	r := chi.NewRouter()
+	a.Routes(r)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest("POST", "/jobs/"+id+"/documents?name=a.pdf", strings.NewReader("%PDF"))
+			req.Header.Set("Content-Type", "application/pdf")
+			r.ServeHTTP(httptest.NewRecorder(), req)
+		}()
+	}
+	wg.Wait()
+	var n int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM job_documents WHERE job_id = $1`, id).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("8 parallel uploads left %d documents; the limit is 2 (%v)", n, err)
 	}
 }

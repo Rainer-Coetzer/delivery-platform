@@ -315,6 +315,20 @@ func GetProof(ctx context.Context, q db.Queryer, assignmentID string, seq int) (
 	return p, nil
 }
 
+// LockPIN locks a stop's PIN row for the rest of tx and returns its hash
+// and wrong tries so far, so concurrent guesses are counted one at a time.
+func LockPIN(ctx context.Context, tx pgx.Tx, assignmentID string, seq int) (hash string, attempts int, err error) {
+	err = tx.QueryRow(ctx, `SELECT coalesce(pin_hash,''), pin_attempts FROM assignment_stops
+		WHERE assignment_id = $1 AND seq = $2 FOR UPDATE`, assignmentID, seq).Scan(&hash, &attempts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, ErrNotFound
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("lock PIN of stop %d on assignment %s: %w", seq, assignmentID, err)
+	}
+	return hash, attempts, nil
+}
+
 // CountWrongPIN records one more wrong PIN at a stop and returns the total
 // so far. It commits with its own transaction's caller: a wrong guess must
 // count even though the request fails.

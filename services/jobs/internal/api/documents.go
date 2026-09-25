@@ -67,14 +67,10 @@ func (a *API) uploadDocument(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "documents may be: "+strings.Join(limits.AllowedTypes, ", "))
 		return
 	}
-	var count int
-	if err := a.Pool.QueryRow(ctx, `SELECT count(*) FROM job_documents WHERE job_id = $1`, job.ID).Scan(&count); err != nil {
-		a.Log.Error("count documents", "error", err)
-		httpx.Internal(w, "could not store the document")
-		return
-	}
-	if count >= limits.MaxPerJob {
-		httpx.Conflict(w, fmt.Sprintf("a job holds at most %d documents", limits.MaxPerJob))
+	// A quick count to refuse early, before reading the file; the insert
+	// below counts again under the job's lock, which is what holds.
+	if full, err := a.documentsFull(ctx, a.Pool, job.ID, limits.MaxPerJob); err != nil || full {
+		a.refuseFull(w, err, limits.MaxPerJob)
 		return
 	}
 
@@ -92,16 +88,49 @@ func (a *API) uploadDocument(w http.ResponseWriter, r *http.Request) {
 		httpx.BadRequest(w, "could not store the document: "+err.Error())
 		return
 	}
-	err = a.Pool.QueryRow(ctx, `
-		INSERT INTO job_documents (id, job_id, name, content_type, size_bytes, blob_key, uploaded_by, uploaded_role)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING created_at`,
-		doc.ID, doc.JobID, doc.Name, doc.ContentType, doc.SizeBytes, doc.blobKey, doc.UploadedBy, doc.UploadedRole).Scan(&doc.CreatedAt)
+	errFull := errors.New("full")
+	err = a.Pool.WithTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM jobs WHERE id = $1 FOR UPDATE`, job.ID); err != nil {
+			return err
+		}
+		if full, err := a.documentsFull(ctx, tx, job.ID, limits.MaxPerJob); err != nil || full {
+			if err == nil {
+				err = errFull
+			}
+			return err
+		}
+		return tx.QueryRow(ctx, `
+			INSERT INTO job_documents (id, job_id, name, content_type, size_bytes, blob_key, uploaded_by, uploaded_role)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING created_at`,
+			doc.ID, doc.JobID, doc.Name, doc.ContentType, doc.SizeBytes, doc.blobKey, doc.UploadedBy, doc.UploadedRole).Scan(&doc.CreatedAt)
+	})
+	if errors.Is(err, errFull) {
+		a.refuseFull(w, nil, limits.MaxPerJob)
+		return
+	}
 	if err != nil {
 		a.Log.Error("record document", "jobId", job.ID, "error", err)
 		httpx.Internal(w, "could not store the document")
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, doc)
+}
+
+func (a *API) documentsFull(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, jobID string, max int) (bool, error) {
+	var n int
+	err := q.QueryRow(ctx, `SELECT count(*) FROM job_documents WHERE job_id = $1`, jobID).Scan(&n)
+	return n >= max, err
+}
+
+func (a *API) refuseFull(w http.ResponseWriter, err error, max int) {
+	if err != nil {
+		a.Log.Error("count documents", "error", err)
+		httpx.Internal(w, "could not store the document")
+		return
+	}
+	httpx.Conflict(w, fmt.Sprintf("a job holds at most %d documents", max))
 }
 
 func (a *API) listDocuments(w http.ResponseWriter, r *http.Request) {

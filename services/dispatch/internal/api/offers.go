@@ -87,6 +87,8 @@ func (a *API) takeQueued(w http.ResponseWriter, r *http.Request, jobID, agentID 
 		httpx.Conflict(w, "the offer has expired or went to someone else")
 	case errors.Is(err, consumers.ErrAgentNotAvailable):
 		httpx.Conflict(w, "the agent isn't available (busy, offline, or just taken)")
+	case errors.Is(err, consumers.ErrAgentDoesNotFit):
+		httpx.Conflict(w, err.Error())
 	case err != nil:
 		a.Log.Error("assign queued job", "jobId", jobID, "agentId", agentID, "error", err)
 		httpx.Internal(w, "could not assign the job")

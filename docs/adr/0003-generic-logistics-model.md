@@ -1,6 +1,6 @@
 # ADR-0003: A generic logistics core; food delivery becomes one pack
 
-**Status:** Accepted
+**Status:** Accepted (amended 2026-09-25: one leg per job, see the end)
 **Date:** 2026-09-24
 **Deciders:** Rainer Coetzer
 
@@ -224,13 +224,25 @@ words, it's config.
 
 ## Action items (Phase C)
 
-1. [ ] Schemas and migrations for jobs, stops, legs, lines, facts;
-   merchants; catalogue; agents, vehicles, assignments, with renames and
-   backfills from today's tables.
-2. [ ] `pkg/lifecycle`: YAML loader plus validator (the rules above), with
-   table-driven tests including invalid packs.
-3. [ ] Event renames in `pkg/events`; dispatch driven by the milestone.
-4. [ ] Strategy registries, selected by the pack.
-5. [ ] `packs/food` (reproduces today exactly; the existing e2e passes),
-   `packs/courier`, and `packs/freight` (stub-level, gaps marked Later).
-6. [ ] Terminology layer and the grep check.
+1. [x] Schemas and migrations for jobs, stops, lines, facts; merchants;
+   catalogue; agents (with vehicle capacity), assignments, with renames and
+   backfills from today's tables. Legs: see the amendment below.
+2. [x] `pkg/lifecycle`: YAML loader plus validator, with table-driven tests
+   including invalid packs.
+3. [x] Event renames in `pkg/events`; dispatch driven by the milestone.
+4. [x] Strategy registries, selected by the pack.
+5. [x] `packs/food` (reproduces today exactly), `packs/courier` (complete),
+   and `packs/freight` (working basic; invoicing and quote pricing are
+   Phase E).
+6. [x] Terminology layer and the grep check (`tools/termcheck`).
+
+## Amendment (Phase C, 2026-09-25): one leg per job, for now
+
+Legs are not built. Every job is one leg, run by one assignment that visits
+all its stops in order (multi-stop included). A second leg needs its own
+dispatch trigger (laundry's return trip waits days for "ready to return"),
+and the milestone spine has one `ready_for_dispatch`. Per-leg dispatch
+means per-leg milestones, which is a change to this ADR's spine, not a
+module; it is listed under Later with that reason. Nothing in the shipped
+packs needs it. Vehicles are likewise one per agent (capacity and
+capabilities on the agent) until a pack needs a fleet per agent.

@@ -21,6 +21,21 @@ func Profile() string { return String("PROFILE", "prod") }
 
 func IsDev() bool { return Profile() == "dev" }
 
+// DemoAutopilot reads DEMO_AUTOPILOT. It stands in for people: it marks
+// jobs ready, completes stops and records simulated proof. Outside
+// PROFILE=dev that would be fabricated delivery records, so it refuses to
+// boot rather than run.
+func DemoAutopilot() (bool, error) {
+	on, err := Bool("DEMO_AUTOPILOT", false)
+	if err != nil {
+		return false, err
+	}
+	if on && !IsDev() {
+		return false, fmt.Errorf("DEMO_AUTOPILOT=true is for PROFILE=dev only (it completes jobs and records simulated proof); PROFILE is %q", Profile())
+	}
+	return on, nil
+}
+
 // JWTSecret returns JWT_SECRET. In dev a missing secret falls back to
 // DevJWTSecret; outside dev a missing, short or dev-default secret is an
 // error the service must refuse to boot on.

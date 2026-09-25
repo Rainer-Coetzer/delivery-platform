@@ -152,3 +152,37 @@ func TestManualAssign(t *testing.T) {
 		t.Fatalf("a2 is busy now: %d %s", c, b)
 	}
 }
+
+// With the capacity module on, an admin can't hand a load to a vehicle
+// that can't carry it: the same rule automatic dispatch applies.
+func TestManualAssignRespectsCapacity(t *testing.T) {
+	w := newWorld(t, "manual", "")
+	w.dispatcher.Capacity = true
+	ctx := context.Background()
+	for _, a := range []*store.Agent{
+		{ID: "bike", Name: "bike", Vehicle: "bike", Status: "OFFLINE", Lat: -22.571, Lng: 17.08, CapacityGrams: 15000, CapacityCm3: 60000},
+		{ID: "truck", Name: "truck", Vehicle: "truck", Status: "OFFLINE", Lat: -22.575, Lng: 17.08, CapacityGrams: 8000000, CapacityCm3: 40000000},
+	} {
+		if err := w.st.RegisterAgent(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.st.SetAgentStatus(ctx, a.ID, "AVAILABLE"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	jobID := uuid.NewString()
+	env, _ := events.New(events.JobStatusChanged, jobID, events.JobStatusChangedData{
+		JobID: jobID, To: "READY", ToMilestone: lifecycle.ReadyForDispatch, Size: &events.JobSize{WeightGrams: 500000, VolumeCm3: 2000000},
+		Stops: []events.Stop{{Seq: 0, Kind: "pickup", Location: events.Location{Lat: -22.57, Lng: 17.08}}, {Seq: 1, Kind: "dropoff", Location: events.Location{Lat: -22.52, Lng: 17.06}}},
+	})
+	if err := w.handlers.Handle(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	admin := &auth.Claims{UserID: "x", Role: auth.RoleAdmin}
+	if c, b := w.call(t, admin, "POST", "/assignments", `{"jobId":"`+jobID+`","agentId":"bike"}`); c != 409 || !strings.Contains(b, "doesn't fit") {
+		t.Fatalf("half a ton on a bike: %d %s", c, b)
+	}
+	if c, b := w.call(t, admin, "POST", "/assignments", `{"jobId":"`+jobID+`","agentId":"truck"}`); c != 200 {
+		t.Fatalf("the truck takes it: %d %s", c, b)
+	}
+}

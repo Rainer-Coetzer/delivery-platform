@@ -142,23 +142,19 @@ func (a *API) checkPIN(w http.ResponseWriter, r *http.Request, d *store.Assignme
 	var attempts int
 	var matched bool
 	err := a.Pool.WithTx(ctx, func(tx pgx.Tx) error {
-		stops, err := store.Stops(ctx, tx, d.ID)
+		// Locked: without it, a burst of parallel guesses all read the
+		// count before any of them adds to it, and the limit means nothing.
+		hash, tries, err := store.LockPIN(ctx, tx, d.ID, seq)
 		if err != nil {
 			return err
 		}
-		var stop *store.AssignmentStop
-		for i := range stops {
-			if stops[i].Seq == seq {
-				stop = &stops[i]
-			}
-		}
-		if stop == nil || stop.PinHash == "" {
+		if hash == "" {
 			return fmt.Errorf("stop %d of assignment %s wants a PIN but has no PIN hash", seq, d.ID)
 		}
-		if attempts = stop.PinAttempts; attempts >= a.Proof.PinAttempts {
+		if attempts = tries; attempts >= a.Proof.PinAttempts {
 			return nil
 		}
-		matched = subtle.ConstantTimeCompare([]byte(events.PinHash(d.JobID, seq, pin)), []byte(stop.PinHash)) == 1
+		matched = subtle.ConstantTimeCompare([]byte(events.PinHash(d.JobID, seq, pin)), []byte(hash)) == 1
 		if !matched {
 			attempts, err = store.CountWrongPIN(ctx, tx, d.ID, seq)
 		}

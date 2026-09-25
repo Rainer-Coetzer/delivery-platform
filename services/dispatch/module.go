@@ -24,7 +24,7 @@ var Definition = app.Definition{
 }
 
 func newModule(d app.Deps) (*app.Module, error) {
-	autopilot, err := config.Bool("DEMO_AUTOPILOT", false)
+	autopilot, err := config.DemoAutopilot()
 	if err != nil {
 		return nil, err
 	}
