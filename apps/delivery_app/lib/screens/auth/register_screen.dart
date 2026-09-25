@@ -51,7 +51,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       TextField(controller: _password, obscureText: true, decoration: const InputDecoration(labelText: 'Password (min 8 chars)')),
                       const SizedBox(height: 12),
                       const Text(
-                        'Restaurant and driver accounts are set up by an admin.',
+                        'Business and staff accounts are set up by an admin.',
                         style: TextStyle(color: Colors.grey),
                       ),
                       if (_error != null) ...[

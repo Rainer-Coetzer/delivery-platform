@@ -2,17 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'core/config.dart';
 import 'providers/providers.dart';
+import 'screens/admin/admin_dashboard_screen.dart';
+import 'screens/agent/agent_home_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
-import 'screens/customer/restaurant_list_screen.dart';
-import 'screens/customer/menu_screen.dart';
 import 'screens/customer/cart_screen.dart';
-import 'screens/customer/order_tracking_screen.dart';
-import 'screens/customer/order_history_screen.dart';
-import 'screens/driver/driver_home_screen.dart';
-import 'screens/restaurant/restaurant_board_screen.dart';
-import 'screens/admin/admin_dashboard_screen.dart';
+import 'screens/customer/catalogue_screen.dart';
+import 'screens/customer/job_history_screen.dart';
+import 'screens/customer/job_tracking_screen.dart';
+import 'screens/customer/merchant_list_screen.dart';
+import 'screens/merchant/merchant_board_screen.dart';
 
 void main() {
   runApp(const ProviderScope(child: DeliveryApp()));
@@ -23,64 +24,88 @@ class DeliveryApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Rebuilding GoRouter on every auth change is a simplification: it only
-    // happens at login/logout, which is rare enough that resetting the
-    // navigation stack at that moment is the desired behavior anyway (the
-    // user should land back on their role's home screen).
-    final auth = ref.watch(authControllerProvider);
-    final router = _buildRouter(auth);
-
-    return MaterialApp.router(
-      title: 'Delivery Platform',
-      theme: ThemeData(colorSchemeSeed: Colors.deepOrange, useMaterial3: true),
-      routerConfig: router,
-    );
+    final theme = ThemeData(colorSchemeSeed: Colors.deepOrange, useMaterial3: true);
+    // Every screen speaks the pack's words, so nothing is shown until the
+    // platform config (GET /config) is in.
+    return ref.watch(configProvider).when(
+          data: (config) {
+            // Rebuilding GoRouter on every auth change is a simplification:
+            // it only happens at login/logout, which is rare enough that
+            // resetting the navigation stack then is what we want anyway
+            // (the user lands on their role's home screen).
+            final auth = ref.watch(authControllerProvider);
+            return MaterialApp.router(
+              title: config.title('job'),
+              theme: theme,
+              routerConfig: _buildRouter(auth, config),
+            );
+          },
+          loading: () => MaterialApp(theme: theme, home: const Scaffold(body: Center(child: CircularProgressIndicator()))),
+          error: (e, _) => MaterialApp(
+            theme: theme,
+            home: Scaffold(
+              body: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Text("Can't reach the platform: $e", textAlign: TextAlign.center),
+                    const SizedBox(height: 12),
+                    FilledButton(onPressed: () => ref.invalidate(configProvider), child: const Text('Try again')),
+                  ]),
+                ),
+              ),
+            ),
+          ),
+        );
   }
 
-  GoRouter _buildRouter(AuthState auth) {
+  GoRouter _buildRouter(AuthState auth, AppConfig config) {
     return GoRouter(
       initialLocation: '/login',
       redirect: (context, state) {
         final loggedIn = auth.isLoggedIn;
         final loggingIn = state.matchedLocation == '/login' || state.matchedLocation == '/register';
         if (!loggedIn && !loggingIn) return '/login';
-        if (loggedIn && loggingIn) return _homeFor(auth.user!.role);
+        if (loggedIn && loggingIn) return _homeFor(auth.user!.role, config);
         return null;
       },
       routes: [
         GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
         GoRoute(path: '/register', builder: (context, state) => const RegisterScreen()),
-        GoRoute(path: '/restaurants', builder: (context, state) => const RestaurantListScreen()),
+        GoRoute(path: '/merchants', builder: (context, state) => const MerchantListScreen()),
         GoRoute(
-          path: '/restaurants/:id/menu',
-          builder: (context, state) => MenuScreen(
-            restaurantId: state.pathParameters['id']!,
-            restaurantName: state.uri.queryParameters['name'] ?? '',
+          path: '/merchants/:id/catalogue',
+          builder: (context, state) => CatalogueScreen(
+            merchantId: state.pathParameters['id']!,
+            merchantName: state.uri.queryParameters['name'] ?? '',
           ),
         ),
         GoRoute(path: '/cart', builder: (context, state) => const CartScreen()),
         GoRoute(
-          path: '/orders/:id/track',
-          builder: (context, state) => OrderTrackingScreen(orderId: state.pathParameters['id']!),
+          path: '/jobs/:id/track',
+          builder: (context, state) => JobTrackingScreen(jobId: state.pathParameters['id']!),
         ),
-        GoRoute(path: '/orders/history', builder: (context, state) => const OrderHistoryScreen()),
-        GoRoute(path: '/driver', builder: (context, state) => const DriverHomeScreen()),
-        GoRoute(path: '/restaurant-board', builder: (context, state) => const RestaurantBoardScreen()),
+        GoRoute(path: '/jobs', builder: (context, state) => const JobHistoryScreen()),
+        GoRoute(path: '/agent', builder: (context, state) => const AgentHomeScreen()),
+        GoRoute(path: '/merchant-board', builder: (context, state) => const MerchantBoardScreen()),
         GoRoute(path: '/admin', builder: (context, state) => const AdminDashboardScreen()),
       ],
     );
   }
 
-  String _homeFor(String role) {
+  /// Each role's home. A customer browses merchants when the pack has a
+  /// catalogue; otherwise they start from their own jobs (booking a
+  /// courier or freight job in the app comes with the customer app, Phase E).
+  String _homeFor(String role, AppConfig config) {
     switch (role) {
       case 'agent':
-        return '/driver';
+        return '/agent';
       case 'merchant':
-        return '/restaurant-board';
+        return '/merchant-board';
       case 'admin':
         return '/admin';
       default:
-        return '/restaurants';
+        return config.has('catalogue') ? '/merchants' : '/jobs';
     }
   }
 }

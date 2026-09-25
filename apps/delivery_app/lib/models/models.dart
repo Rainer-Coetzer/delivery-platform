@@ -1,6 +1,8 @@
 // Plain, hand-written models with fromJson/toJson matching the JSON shapes
-// each backend service returns (see each service's internal/api package).
-// No codegen, so `flutter pub get` is the only step needed before running the app.
+// each backend module returns (see each module's internal/api package).
+// No codegen, so `flutter pub get` is the only step needed before running
+// the app. Names are the platform's generic domain (ADR-0003); what a
+// person reads comes from the pack (core/config.dart).
 
 class LatLng2 {
   final double lat;
@@ -31,16 +33,16 @@ class User {
       );
 }
 
-class Restaurant {
+class Merchant {
   final String id;
   final String name;
   final double lat;
   final double lng;
   final bool isOpen;
 
-  Restaurant({required this.id, required this.name, required this.lat, required this.lng, required this.isOpen});
+  Merchant({required this.id, required this.name, required this.lat, required this.lng, required this.isOpen});
 
-  factory Restaurant.fromJson(Map<String, dynamic> json) => Restaurant(
+  factory Merchant.fromJson(Map<String, dynamic> json) => Merchant(
         id: json['id'] as String,
         name: json['name'] as String,
         lat: (json['lat'] as num).toDouble(),
@@ -49,26 +51,26 @@ class Restaurant {
       );
 }
 
-class MenuItem {
+class CatalogueItem {
   final String id;
-  final String restaurantId;
+  final String merchantId;
   final String name;
   final int priceCents;
   final int stockQty;
   final bool available;
 
-  MenuItem({
+  CatalogueItem({
     required this.id,
-    required this.restaurantId,
+    required this.merchantId,
     required this.name,
     required this.priceCents,
     required this.stockQty,
     required this.available,
   });
 
-  factory MenuItem.fromJson(Map<String, dynamic> json) => MenuItem(
+  factory CatalogueItem.fromJson(Map<String, dynamic> json) => CatalogueItem(
         id: json['id'] as String,
-        restaurantId: json['merchantId'] as String,
+        merchantId: json['merchantId'] as String,
         name: json['name'] as String,
         priceCents: (json['priceCents'] as num).toInt(),
         stockQty: (json['stockQty'] as num).toInt(),
@@ -77,80 +79,81 @@ class MenuItem {
 }
 
 class CartLine {
-  final MenuItem item;
+  final CatalogueItem item;
   int quantity;
   CartLine({required this.item, this.quantity = 1});
   int get subtotalCents => item.priceCents * quantity;
 }
 
-class OrderItemDto {
-  final String menuItemId;
+class JobLine {
+  final String kind; // catalogue or package
+  final String catalogueItemId;
   final String name;
   final int quantity;
   final int unitPriceCents;
 
-  OrderItemDto({required this.menuItemId, required this.name, required this.quantity, required this.unitPriceCents});
+  JobLine({required this.kind, required this.catalogueItemId, required this.name, required this.quantity, required this.unitPriceCents});
 
-  Map<String, dynamic> toJson() => {
-        'catalogueItemId': menuItemId,
-        'name': name,
-        'quantity': quantity,
-        'unitPriceCents': unitPriceCents,
-      };
-
-  factory OrderItemDto.fromJson(Map<String, dynamic> json) => OrderItemDto(
-        menuItemId: json['catalogueItemId'] as String,
+  factory JobLine.fromJson(Map<String, dynamic> json) => JobLine(
+        kind: json['kind'] as String? ?? 'catalogue',
+        catalogueItemId: json['catalogueItemId'] as String? ?? '',
         name: json['name'] as String,
         quantity: (json['quantity'] as num).toInt(),
-        unitPriceCents: (json['unitPriceCents'] as num).toInt(),
+        unitPriceCents: (json['unitPriceCents'] as num?)?.toInt() ?? 0,
       );
 }
 
-class Order {
+class Job {
   final String id;
   final String customerId;
-  final String restaurantId;
-  final String restaurantName;
-  final String status;
-  final List<OrderItemDto> items;
+  final String merchantId;
+  final String merchantName;
+  final String status; // the pack's state name
+  final String milestone; // what code decides on
+  final List<JobLine> items;
   final int subtotalCents;
   final int deliveryFeeCents;
   final double surgeMultiplier;
   final int totalCents;
-  final String driverId;
+  final String agentId;
+  final List<String> actions; // states this caller may move the job to
 
-  Order({
+  Job({
     required this.id,
     required this.customerId,
-    required this.restaurantId,
-    required this.restaurantName,
+    required this.merchantId,
+    required this.merchantName,
     required this.status,
+    required this.milestone,
     required this.items,
     required this.subtotalCents,
     required this.deliveryFeeCents,
     required this.surgeMultiplier,
     required this.totalCents,
-    required this.driverId,
+    required this.agentId,
+    required this.actions,
   });
 
-  factory Order.fromJson(Map<String, dynamic> json) => Order(
+  bool get finished => milestone == 'completed' || milestone == 'cancelled';
+
+  factory Job.fromJson(Map<String, dynamic> json) => Job(
         id: json['id'] as String,
         customerId: json['customerId'] as String? ?? '',
-        restaurantId: json['merchantId'] as String? ?? '',
-        restaurantName: json['merchantName'] as String? ?? '',
+        merchantId: json['merchantId'] as String? ?? '',
+        merchantName: json['merchantName'] as String? ?? '',
         status: json['status'] as String,
-        items: ((json['items']) as List<dynamic>? ?? [])
-            .map((e) => OrderItemDto.fromJson(e as Map<String, dynamic>))
-            .toList(),
+        milestone: json['milestone'] as String? ?? '',
+        items: ((json['items']) as List<dynamic>? ?? []).map((e) => JobLine.fromJson(e as Map<String, dynamic>)).toList(),
         subtotalCents: (json['subtotalCents'] as num?)?.toInt() ?? 0,
         deliveryFeeCents: (json['deliveryFeeCents'] as num?)?.toInt() ?? 0,
         surgeMultiplier: (json['surgeMultiplier'] as num?)?.toDouble() ?? 1.0,
         totalCents: (json['totalCents'] as num?)?.toInt() ?? 0,
-        driverId: json['agentId'] as String? ?? '',
+        agentId: json['agentId'] as String? ?? '',
+        actions: List<String>.from(json['actions'] as List? ?? const []),
       );
 }
 
-class Driver {
+class Agent {
   final String id;
   final String name;
   final String vehicle;
@@ -158,12 +161,12 @@ class Driver {
   final double lat;
   final double lng;
 
-  Driver({required this.id, required this.name, required this.vehicle, required this.status, required this.lat, required this.lng});
+  Agent({required this.id, required this.name, required this.vehicle, required this.status, required this.lat, required this.lng});
 
-  factory Driver.fromJson(Map<String, dynamic> json) => Driver(
+  factory Agent.fromJson(Map<String, dynamic> json) => Agent(
         id: json['id'] as String,
         name: json['name'] as String,
-        vehicle: json['vehicle'] as String? ?? 'bike',
+        vehicle: json['vehicle'] as String? ?? '',
         status: json['status'] as String,
         lat: (json['lat'] as num).toDouble(),
         lng: (json['lng'] as num).toDouble(),
@@ -174,14 +177,14 @@ class NotificationDto {
   final String id;
   final String title;
   final String body;
-  final String? orderId;
+  final String? jobId;
 
-  NotificationDto({required this.id, required this.title, required this.body, this.orderId});
+  NotificationDto({required this.id, required this.title, required this.body, this.jobId});
 
   factory NotificationDto.fromJson(Map<String, dynamic> json) => NotificationDto(
         id: json['id'] as String,
         title: json['title'] as String,
         body: json['body'] as String,
-        orderId: json['jobId'] as String?,
+        jobId: json['jobId'] as String?,
       );
 }

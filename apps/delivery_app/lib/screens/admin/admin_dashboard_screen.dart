@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/config.dart';
 import '../../providers/providers.dart';
 
 class AdminDashboardScreen extends ConsumerWidget {
@@ -8,6 +9,7 @@ class AdminDashboardScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final config = ref.watch(configProvider).requireValue;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Admin overview'),
@@ -18,6 +20,7 @@ class AdminDashboardScreen extends ConsumerWidget {
       body: FutureBuilder<Map<String, dynamic>>(
         future: ref.read(adminRepositoryProvider).overview(),
         builder: (context, snapshot) {
+          if (snapshot.hasError) return Center(child: Text('Could not load the overview: ${snapshot.error}'));
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           final data = snapshot.data!;
           final byStatus = (data['jobsByStatus'] as Map<String, dynamic>?) ?? {};
@@ -28,21 +31,18 @@ class AdminDashboardScreen extends ConsumerWidget {
                 spacing: 12,
                 runSpacing: 12,
                 children: [
-                  _StatCard(label: 'Total orders', value: '${data['totalJobs'] ?? 0}'),
+                  _StatCard(label: 'Total ${config.term('jobs')}', value: '${data['totalJobs'] ?? 0}'),
+                  _StatCard(label: 'Total revenue', value: money((data['totalRevenueCents'] ?? 0) as num)),
                   _StatCard(
-                    label: 'Total revenue',
-                    value: 'N\$${(((data['totalRevenueCents'] ?? 0) as num) / 100).toStringAsFixed(2)}',
-                  ),
-                  _StatCard(
-                    label: 'Avg delivery time',
+                    label: 'Average time to complete',
                     value: '${((data['avgCompletionMinutes'] ?? 0) as num).toStringAsFixed(1)} min',
                   ),
                 ],
               ),
               const SizedBox(height: 24),
-              Text('Orders by status', style: Theme.of(context).textTheme.titleMedium),
+              Text('${config.title('jobs')} by state', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
-              ...byStatus.entries.map((e) => ListTile(title: Text(e.key), trailing: Text('${e.value}'))),
+              ...byStatus.entries.map((e) => ListTile(title: Text(config.stateLabel(e.key)), trailing: Text('${e.value}'))),
             ],
           );
         },

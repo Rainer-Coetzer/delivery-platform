@@ -4,55 +4,60 @@ import 'package:go_router/go_router.dart';
 
 import '../../providers/providers.dart';
 
-class RestaurantListScreen extends ConsumerWidget {
-  const RestaurantListScreen({super.key});
+/// The merchants a customer can order from (catalogue module). Words come
+/// from the pack: "Restaurants" for food.
+class MerchantListScreen extends ConsumerWidget {
+  const MerchantListScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final restaurants = ref.watch(restaurantsListProvider);
+    final config = ref.watch(configProvider).requireValue;
+    final merchants = ref.watch(merchantsListProvider);
     final cart = ref.watch(cartProvider);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Restaurants'),
+        title: Text(config.title('merchants')),
         actions: [
-          IconButton(icon: const Icon(Icons.history), onPressed: () => context.push('/orders/history')),
+          IconButton(icon: const Icon(Icons.history), tooltip: 'Your ${config.term('jobs')}', onPressed: () => context.push('/jobs')),
           IconButton(
             icon: Badge(
               label: Text('${cart.length}'),
               isLabelVisible: cart.isNotEmpty,
               child: const Icon(Icons.shopping_cart),
             ),
+            tooltip: 'Cart',
             onPressed: () => context.push('/cart'),
           ),
           IconButton(
             icon: const Icon(Icons.logout),
+            tooltip: 'Log out',
             onPressed: () => ref.read(authControllerProvider.notifier).logout(),
           ),
         ],
       ),
-      body: restaurants.when(
+      body: merchants.when(
         data: (list) => list.isEmpty
-            ? const Center(child: Text('No restaurants yet — run infra/seed/seed.sh'))
+            ? Center(child: Text('No ${config.term('merchants')} yet'))
             : ListView.separated(
                 padding: const EdgeInsets.all(12),
                 itemCount: list.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
                 itemBuilder: (context, i) {
-                  final r = list[i];
+                  final m = list[i];
                   return Card(
                     child: ListTile(
-                      leading: CircleAvatar(child: Text(r.name.isNotEmpty ? r.name[0] : '?')),
-                      title: Text(r.name),
-                      subtitle: Text(r.isOpen ? 'Open' : 'Closed'),
+                      leading: CircleAvatar(child: Text(m.name.isNotEmpty ? m.name[0] : '?')),
+                      title: Text(m.name),
+                      subtitle: Text(m.isOpen ? 'Open' : 'Closed'),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: () => context.push('/restaurants/${r.id}/menu?name=${Uri.encodeComponent(r.name)}'),
+                      onTap: () => context.push('/merchants/${m.id}/catalogue?name=${Uri.encodeComponent(m.name)}'),
                     ),
                   );
                 },
               ),
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, st) => Center(child: Text('Could not load restaurants: $e')),
+        error: (e, st) => Center(child: Text('Could not load ${config.term('merchants')}: $e')),
       ),
     );
   }

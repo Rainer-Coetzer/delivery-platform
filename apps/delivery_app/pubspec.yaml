@@ -1,5 +1,5 @@
 name: delivery_app
-description: Customer, driver, restaurant and admin client for the food delivery platform.
+description: Customer, merchant, agent and admin client for the logistics platform; the server's pack decides what it is (food, courier, freight).
 publish_to: "none"
 version: 1.0.0+1
 

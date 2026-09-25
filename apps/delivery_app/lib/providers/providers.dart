@@ -1,6 +1,6 @@
-// Central Riverpod wiring: one ApiClient, one AuthController holding the
-// logged-in user, and small repository classes for each backend service the
-// app talks to (all through the gateway).
+// Central Riverpod wiring: one ApiClient, the platform config, one
+// AuthController holding the logged-in user, and small repository classes
+// for each backend module the app talks to (all through the gateway).
 import 'dart:async';
 import 'dart:convert';
 
@@ -9,9 +9,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../core/api_client.dart';
+import '../core/config.dart';
 import '../models/models.dart';
 
 final apiClientProvider = Provider<ApiClient>((ref) => ApiClient());
+
+/// The platform's configuration (GET /config): words, lifecycle, modules.
+/// Fetched once; it only changes when the server's pack does.
+final configProvider = FutureProvider<AppConfig>((ref) async {
+  final res = await ref.watch(apiClientProvider).dio.get('/config');
+  return AppConfig.fromJson(res.data as Map<String, dynamic>);
+});
 
 // --- Auth ---
 
@@ -41,9 +49,9 @@ class AuthController extends StateNotifier<AuthState> {
     }
   }
 
-  /// Public sign-up always creates a customer. Restaurant, driver and admin
+  /// Public sign-up always creates a customer. Merchant, agent and admin
   /// accounts are created by an admin (POST /users), already linked to
-  /// their restaurant or driver record.
+  /// their merchant or agent record.
   Future<String?> register(String name, String email, String password) async {
     state = const AuthState(loading: true);
     try {
@@ -74,47 +82,47 @@ final authControllerProvider = StateNotifierProvider<AuthController, AuthState>(
   return AuthController(ref.watch(apiClientProvider));
 });
 
-// --- Restaurants & menu ---
+// --- Merchants & catalogue (catalogue module) ---
 
-class RestaurantRepository {
+class MerchantRepository {
   final ApiClient _api;
-  RestaurantRepository(this._api);
+  MerchantRepository(this._api);
 
-  Future<List<Restaurant>> list() async {
+  Future<List<Merchant>> list() async {
     final res = await _api.dio.get('/merchants');
-    return (res.data as List).map((e) => Restaurant.fromJson(e as Map<String, dynamic>)).toList();
+    return (res.data as List).map((e) => Merchant.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  Future<List<MenuItem>> menu(String restaurantId) async {
-    final res = await _api.dio.get('/merchants/$restaurantId/catalogue-items');
-    return (res.data as List).map((e) => MenuItem.fromJson(e as Map<String, dynamic>)).toList();
+  Future<List<CatalogueItem>> catalogue(String merchantId) async {
+    final res = await _api.dio.get('/merchants/$merchantId/catalogue-items');
+    return (res.data as List).map((e) => CatalogueItem.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  Future<void> createMenuItem(String restaurantId, {required String name, required int priceCents, required int stockQty}) {
-    return _api.dio.post('/merchants/$restaurantId/catalogue-items', data: {
+  Future<void> createItem(String merchantId, {required String name, required int priceCents, required int stockQty}) {
+    return _api.dio.post('/merchants/$merchantId/catalogue-items', data: {
       'name': name, 'priceCents': priceCents, 'stockQty': stockQty, 'available': true,
     });
   }
 
-  Future<void> updateMenuItem(String restaurantId, MenuItem item) {
-    return _api.dio.patch('/merchants/$restaurantId/catalogue-items/${item.id}', data: {
+  Future<void> updateItem(String merchantId, CatalogueItem item) {
+    return _api.dio.patch('/merchants/$merchantId/catalogue-items/${item.id}', data: {
       'name': item.name, 'priceCents': item.priceCents, 'stockQty': item.stockQty, 'available': item.available,
     });
   }
 
-  Future<void> markReady(String restaurantId, String orderId) {
-    return _api.dio.post('/merchants/$restaurantId/jobs/$orderId/ready');
+  Future<void> markReady(String merchantId, String jobId) {
+    return _api.dio.post('/merchants/$merchantId/jobs/$jobId/ready');
   }
 }
 
-final restaurantRepositoryProvider = Provider((ref) => RestaurantRepository(ref.watch(apiClientProvider)));
+final merchantRepositoryProvider = Provider((ref) => MerchantRepository(ref.watch(apiClientProvider)));
 
-final restaurantsListProvider = FutureProvider<List<Restaurant>>((ref) {
-  return ref.watch(restaurantRepositoryProvider).list();
+final merchantsListProvider = FutureProvider<List<Merchant>>((ref) {
+  return ref.watch(merchantRepositoryProvider).list();
 });
 
-final menuProvider = FutureProvider.family<List<MenuItem>, String>((ref, restaurantId) {
-  return ref.watch(restaurantRepositoryProvider).menu(restaurantId);
+final catalogueProvider = FutureProvider.family<List<CatalogueItem>, String>((ref, merchantId) {
+  return ref.watch(merchantRepositoryProvider).catalogue(merchantId);
 });
 
 // --- Cart (customer-side, in-memory) ---
@@ -122,18 +130,18 @@ final menuProvider = FutureProvider.family<List<MenuItem>, String>((ref, restaur
 class CartController extends StateNotifier<Map<String, CartLine>> {
   CartController() : super({});
 
-  /// The restaurant the current cart belongs to (a cart only ever holds
-  /// items from one restaurant at a time — adding from a different one
-  /// starts a fresh cart, matching how most delivery apps behave).
-  String? restaurantId;
-  String? restaurantName;
+  /// The merchant the current cart belongs to (a cart only ever holds items
+  /// from one merchant at a time: adding from another starts a fresh cart,
+  /// as most ordering apps do).
+  String? merchantId;
+  String? merchantName;
 
-  void add(MenuItem item, {required String restaurantName}) {
-    if (restaurantId != null && restaurantId != item.restaurantId) {
+  void add(CatalogueItem item, {required String merchantName}) {
+    if (merchantId != null && merchantId != item.merchantId) {
       state = {};
     }
-    restaurantId = item.restaurantId;
-    this.restaurantName = restaurantName;
+    merchantId = item.merchantId;
+    this.merchantName = merchantName;
     final existing = state[item.id];
     state = {
       ...state,
@@ -141,12 +149,12 @@ class CartController extends StateNotifier<Map<String, CartLine>> {
     };
   }
 
-  void remove(String menuItemId) {
+  void remove(String itemId) {
     final next = {...state};
-    final line = next[menuItemId];
+    final line = next[itemId];
     if (line == null) return;
     if (line.quantity <= 1) {
-      next.remove(menuItemId);
+      next.remove(itemId);
     } else {
       line.quantity--;
     }
@@ -155,8 +163,8 @@ class CartController extends StateNotifier<Map<String, CartLine>> {
 
   void clear() {
     state = {};
-    restaurantId = null;
-    restaurantName = null;
+    merchantId = null;
+    merchantName = null;
   }
 
   int get totalCents => state.values.fold(0, (sum, l) => sum + l.subtotalCents);
@@ -164,91 +172,88 @@ class CartController extends StateNotifier<Map<String, CartLine>> {
 
 final cartProvider = StateNotifierProvider<CartController, Map<String, CartLine>>((ref) => CartController());
 
-// --- Orders ---
+// --- Jobs ---
 
-class OrderRepository {
+class JobRepository {
   final ApiClient _api;
-  OrderRepository(this._api);
+  JobRepository(this._api);
 
   /// Sends only what the customer chooses. The server prices every line
-  /// from the restaurant's own menu, takes the customer from the token and
-  /// the pickup point from the restaurant, so none of that is sent.
-  Future<Order> create({
-    required String restaurantId,
+  /// from the merchant's own catalogue, takes the customer from the token
+  /// and the pickup point from the merchant, so none of that is sent.
+  Future<Job> createFromCatalogue({
+    required String merchantId,
     required List<CartLine> lines,
     required String paymentMethod,
     required LatLng2 dropoff,
   }) async {
     final res = await _api.dio.post('/jobs/', data: {
-      'merchantId': restaurantId,
+      'merchantId': merchantId,
       'items': lines.map((l) => {'catalogueItemId': l.item.id, 'quantity': l.quantity}).toList(),
       'paymentMethod': paymentMethod,
       'dropoff': dropoff.toJson(),
     });
-    return Order.fromJson(res.data as Map<String, dynamic>);
+    return Job.fromJson(res.data as Map<String, dynamic>);
   }
 
-  Future<Order> get(String id) async {
+  Future<Job> get(String id) async {
     final res = await _api.dio.get('/jobs/$id');
-    return Order.fromJson(res.data as Map<String, dynamic>);
+    return Job.fromJson(res.data as Map<String, dynamic>);
   }
 
-  Future<List<Order>> byCustomer(String customerId) async {
+  Future<List<Job>> byCustomer(String customerId) async {
     final res = await _api.dio.get('/jobs/', queryParameters: {'customerId': customerId});
-    return (res.data as List).map((e) => Order.fromJson(e as Map<String, dynamic>)).toList();
+    return (res.data as List).map((e) => Job.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  Future<List<Order>> byRestaurant(String restaurantId) async {
-    final res = await _api.dio.get('/jobs/', queryParameters: {'merchantId': restaurantId});
-    return (res.data as List).map((e) => Order.fromJson(e as Map<String, dynamic>)).toList();
+  Future<List<Job>> byMerchant(String merchantId) async {
+    final res = await _api.dio.get('/jobs/', queryParameters: {'merchantId': merchantId});
+    return (res.data as List).map((e) => Job.fromJson(e as Map<String, dynamic>)).toList();
   }
 }
 
-final orderRepositoryProvider = Provider((ref) => OrderRepository(ref.watch(apiClientProvider)));
+final jobRepositoryProvider = Provider((ref) => JobRepository(ref.watch(apiClientProvider)));
 
-final restaurantOrdersProvider = FutureProvider.family<List<Order>, String>((ref, restaurantId) {
-  return ref.watch(orderRepositoryProvider).byRestaurant(restaurantId);
+final merchantJobsProvider = FutureProvider.family<List<Job>, String>((ref, merchantId) {
+  return ref.watch(jobRepositoryProvider).byMerchant(merchantId);
 });
 
-// --- Live order tracking over WebSocket ---
+// --- Live job tracking over WebSocket ---
 
-/// Emits every raw event envelope the gateway forwards for one order:
+/// Emits every raw event envelope the gateway forwards for one job:
 /// jobs.status-changed and dispatch.location. The UI decodes `eventType`
 /// to decide what changed.
-final orderEventsProvider = StreamProvider.family.autoDispose<Map<String, dynamic>, String>((ref, orderId) async* {
+final jobEventsProvider = StreamProvider.family.autoDispose<Map<String, dynamic>, String>((ref, jobId) async* {
   final api = ref.watch(apiClientProvider);
   // The gateway requires the JWT on the socket (browsers can't set headers
   // on a WebSocket handshake, so it goes in the query string).
   final token = await api.readToken() ?? '';
-  final channel = WebSocketChannel.connect(Uri.parse(api.wsUrlForOrder(orderId, token)));
+  final channel = WebSocketChannel.connect(Uri.parse(api.wsUrlForJob(jobId, token)));
   ref.onDispose(() => channel.sink.close());
   yield* channel.stream.map((raw) => jsonDecode(raw as String) as Map<String, dynamic>);
 });
 
-// --- Delivery / drivers ---
+// --- Dispatch: agents and assignments ---
 
-class DeliveryRepository {
+class DispatchRepository {
   final ApiClient _api;
-  DeliveryRepository(this._api);
+  DispatchRepository(this._api);
 
-  Future<List<Driver>> listDrivers() async {
+  Future<List<Agent>> listAgents() async {
     final res = await _api.dio.get('/agents');
-    return (res.data as List).map((e) => Driver.fromJson(e as Map<String, dynamic>)).toList();
+    return (res.data as List).map((e) => Agent.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  Future<void> setStatus(String driverId, String status) {
-    return _api.dio.patch('/agents/$driverId/status', data: {'status': status});
+  Future<void> setStatus(String agentId, String status) {
+    return _api.dio.patch('/agents/$agentId/status', data: {'status': status});
   }
 
-  Future<void> reportLocation(String driverId, double lat, double lng) {
-    return _api.dio.patch('/agents/$driverId/location', data: {'lat': lat, 'lng': lng});
+  Future<void> reportLocation(String agentId, double lat, double lng) {
+    return _api.dio.patch('/agents/$agentId/location', data: {'lat': lat, 'lng': lng});
   }
-
-  Future<void> pickedUp(String deliveryId) => _api.dio.post('/assignments/$deliveryId/picked-up');
-  Future<void> completed(String deliveryId) => _api.dio.post('/assignments/$deliveryId/completed');
 }
 
-final deliveryRepositoryProvider = Provider((ref) => DeliveryRepository(ref.watch(apiClientProvider)));
+final dispatchRepositoryProvider = Provider((ref) => DispatchRepository(ref.watch(apiClientProvider)));
 
 // --- Notifications ---
 
