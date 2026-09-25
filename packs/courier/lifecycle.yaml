@@ -1,0 +1,32 @@
+# Courier lifecycle. Once paid, the delivery goes straight to dispatch:
+# there's no merchant to accept it and nothing to prepare.
+schema: 1
+initial: BOOKED
+
+states:
+  - name: BOOKED
+    milestone: created
+  - name: FINDING_COURIER
+    milestone: ready_for_dispatch
+  - name: IN_TRANSIT
+    milestone: in_transit
+  - name: DELIVERED
+    milestone: completed
+    terminal: true
+  - name: CANCELLED
+    milestone: cancelled
+    terminal: true
+
+facts:
+  paid: { on: payments.completed }
+
+transitions:
+  - { from: BOOKED,          to: FINDING_COURIER, auto: true, when: [paid] }
+  - { from: FINDING_COURIER, to: IN_TRANSIT,      on: dispatch.stop-completed, stop: first_pickup }
+  - { from: IN_TRANSIT,      to: DELIVERED,       on: dispatch.stop-completed, stop: last_stop }
+
+  # A declined card cancels it. The customer can cancel until the parcel
+  # is collected; an admin any time.
+  - { from: "*",                       to: CANCELLED, on: payments.failed }
+  - { from: [BOOKED, FINDING_COURIER], to: CANCELLED, by: [customer] }
+  - { from: "*",                       to: CANCELLED, by: [admin] }

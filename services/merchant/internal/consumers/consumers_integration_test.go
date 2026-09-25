@@ -105,7 +105,7 @@ func TestAcceptPrepareCancel(t *testing.T) {
 	if got := status(t, st, jobID); got != store.StatusAccepted {
 		t.Fatalf("a step with no milestone must not start prep, got %s", got)
 	}
-	handle(t, h, events.JobStatusChanged, jobID, events.JobStatusChangedData{JobID: jobID, To: "WHATEVER", ToMilestone: lifecycle.Confirmed})
+	handle(t, h, events.JobStatusChanged, jobID, events.JobStatusChangedData{JobID: jobID, MerchantID: merchantID, To: "WHATEVER", ToMilestone: lifecycle.Confirmed})
 	if got := status(t, st, jobID); got != store.StatusPreparing {
 		t.Fatalf("after confirmed: %s, want %s", got, store.StatusPreparing)
 	}
@@ -125,5 +125,17 @@ func TestJobWithoutMerchantIsNotOurs(t *testing.T) {
 	handle(t, h, events.JobCreated, jobID, events.JobCreatedData{JobID: jobID})
 	if got := outboxTopics(t, pool); len(got) != 0 {
 		t.Fatalf("a courier job must get no merchant decision, got %v", got)
+	}
+}
+
+// A job with no merchant reaching confirmed (freight) is none of the
+// merchant module's business: no prep, and no warning either.
+func TestConfirmedWithoutMerchantIsIgnored(t *testing.T) {
+	h, pool, _, _, _ := setup(t)
+	jobID := uuid.NewString()
+	handle(t, h, events.JobStatusChanged, jobID, events.JobStatusChangedData{JobID: jobID, To: "APPROVED", ToMilestone: lifecycle.Confirmed})
+	var n int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM processed_events`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("it shouldn't even be recorded as handled: %d %v", n, err)
 	}
 }

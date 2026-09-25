@@ -1,0 +1,71 @@
+# Courier: a customer sends parcels from one address to another. A courier
+# collects them, photographs the pickup, and gets a signature at the door.
+# Priced by distance; the smallest vehicle that fits takes it.
+schema: 1
+name: courier
+description: Same-day parcel delivery between any two addresses, with proof of delivery.
+
+modules: [packages, capacity, proof, scheduling]
+roles: [customer, agent, admin]
+
+job:
+  stops: point_to_point   # the customer names pickup and dropoff
+  lines: packages         # what is sent: description, weight, size, declared value
+  proof:
+    pickup: photo         # the parcel as collected
+    dropoff: signature    # the recipient signs
+
+strategies:
+  # Per started kilometre, with a minimum. Swap for zone_table (fixed
+  # fares between areas) or per_kg (freight-style) without code:
+  #   pricing: { name: per_kg, params: { base_cents: 3000, per_kg_cents: 250 } }
+  pricing:
+    name: per_km
+    params:
+      base_cents: 2500      # pickup fee
+      per_km_cents: 900
+      min_cents: 3500
+  # Capacity is on, so only a vehicle the parcels fit in is considered;
+  # this picks the smallest of those, keeping vans free for big loads.
+  dispatch: { name: capacity_aware }
+  eta:
+    name: vehicle_speed
+    params:
+      default_mps: 8.3
+      by_vehicle: { bike: 8.3, scooter: 9.7, car: 11.1, van: 10.0 }
+  payment:
+    - name: simulated
+      params: { success_rate_pct: 95 }
+    - name: cash
+  notify:
+    - name: console
+
+settings:
+  packages:
+    max_lines: 10
+    max_quantity: 20
+    max_weight_g: 30000           # 30 kg per parcel
+    max_dimension_mm: 1500
+    max_declared_value_cents: 5000000
+  proof:
+    pin_attempts: 5
+    max_photo_bytes: 5000000      # 5 MB
+  scheduling:
+    max_days_ahead: 14
+    min_window_minutes: 60
+    lead_minutes: 30              # dispatch a booked pickup half an hour ahead
+
+terminology:
+  en:
+    job: delivery
+    jobs: deliveries
+    agent: courier
+    agents: couriers
+    assignment: run
+    line: parcel
+    lines: parcels
+    state.BOOKED: Booked
+    state.FINDING_COURIER: Finding a courier
+    state.IN_TRANSIT: On the way
+    state.DELIVERED: Delivered
+    state.CANCELLED: Cancelled

@@ -1,0 +1,47 @@
+# Demo data for the food pack (tools/seed) and the job tools/e2e places.
+# Dev data only: every account's password is the seed tool's demo password.
+customers:
+  - { name: Nangula Amutenya, email: nangula@example.com }
+
+merchants:
+  # 00:00-00:00 spans midnight, so All-Day Kitchen is open around the clock
+  # and the e2e works at whatever hour it runs.
+  - name: All-Day Kitchen
+    opens_at: "00:00"
+    closes_at: "00:00"
+    timezone: Africa/Windhoek
+    lat: -22.5650
+    lng: 17.0750
+    catalogue:
+      - { name: Quarter Chicken & Chips, price_cents: 8500, stock_qty: 500 }
+      - { name: Kapana Platter, price_cents: 6500, stock_qty: 500 }
+  - name: Nando's Maerua
+    opens_at: "09:00"
+    closes_at: "22:00"
+    timezone: Africa/Windhoek
+    lat: -22.5608
+    lng: 17.0658
+    catalogue:
+      - { name: Quarter Chicken & Chips, price_cents: 8500, stock_qty: 500 }
+      - { name: Kapana Platter, price_cents: 6500, stock_qty: 500 }
+  - name: Xwama Cultural Village
+    opens_at: "08:00"
+    closes_at: "21:00"
+    timezone: Africa/Windhoek
+    lat: -22.5750
+    lng: 17.0850
+    catalogue:
+      - { name: Quarter Chicken & Chips, price_cents: 8500, stock_qty: 500 }
+      - { name: Kapana Platter, price_cents: 6500, stock_qty: 500 }
+
+# All start in the Windhoek CBD, a few km from every merchant.
+agents:
+  - { name: Johannes Shikongo, vehicle: bike, lat: -22.5700, lng: 17.0836 }
+  - { name: Maria Nakale, vehicle: bike, lat: -22.5700, lng: 17.0836 }
+  - { name: Petrus Amupolo, vehicle: bike, lat: -22.5700, lng: 17.0836 }
+
+e2e:
+  customer: nangula@example.com
+  payment_method: cash   # cash always authorises, so a simulated decline can't make the run flaky
+  merchant: All-Day Kitchen
+  dropoff: { lat: -22.5594, lng: 17.0832 }

@@ -1,0 +1,75 @@
+# Freight (basic): a business books a load from a depot to one or more
+# drops. A dispatcher approves the booking, the truck that fits takes it,
+# the paperwork travels with the job, and every drop is signed for.
+#
+# Working basic version: priced per km, paid by card or cash. Invoicing
+# and quote-on-request pricing are Phase E.
+schema: 1
+name: freight
+description: Truck loads with multiple drops, capacity matching, documents and signed delivery.
+
+modules: [packages, multi-stop, capacity, documents, approval, proof]
+roles: [customer, agent, admin]
+
+job:
+  stops: multi_stop     # pickup, then one or more drops (waypoints allowed)
+  lines: packages       # pallets and crates: weight and size
+  proof:
+    pickup: photo       # the load as it leaves
+    dropoff: signature  # each drop signed for
+
+strategies:
+  pricing:
+    name: per_km
+    params:
+      base_cents: 150000    # N$1,500 call-out
+      per_km_cents: 2800
+      min_cents: 250000
+  # Only a truck the load fits in, and of those the tightest fit. For a
+  # dispatcher who assigns by hand, use { name: manual }.
+  dispatch: { name: capacity_aware }
+  eta:
+    name: vehicle_speed
+    params:
+      default_mps: 16.7       # ~60 km/h on open road
+      by_vehicle: { bakkie: 19.4, truck: 16.7, rig: 15.3 }
+  payment:
+    - name: simulated
+      params: { success_rate_pct: 95 }
+    - name: cash
+  notify:
+    - name: console
+
+settings:
+  packages:
+    max_lines: 30
+    max_quantity: 40
+    max_weight_g: 1500000         # 1.5 t per item (a heavy pallet)
+    max_dimension_mm: 6000
+    max_declared_value_cents: 500000000
+  multi-stop:
+    max_stops: 8
+  proof:
+    pin_attempts: 5
+    max_photo_bytes: 8000000
+  documents:
+    max_bytes: 10000000
+    max_per_job: 10
+    allowed_types: [application/pdf, image/jpeg, image/png]
+
+terminology:
+  en:
+    job: load
+    jobs: loads
+    agent: driver
+    agents: drivers
+    assignment: trip
+    line: item
+    lines: items
+    stop: drop
+    state.REQUESTED: Requested
+    state.APPROVED: Approved
+    state.AWAITING_TRUCK: Awaiting a truck
+    state.IN_TRANSIT: In transit
+    state.DELIVERED: Delivered
+    state.CANCELLED: Cancelled

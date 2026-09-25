@@ -1,0 +1,35 @@
+# Freight lifecycle. A load needs both payment and a dispatcher's approval
+# (the booking checked: access, times, paperwork) before a truck is sent.
+schema: 1
+initial: REQUESTED
+
+states:
+  - name: REQUESTED
+    milestone: created
+  - name: APPROVED
+    milestone: confirmed
+  - name: AWAITING_TRUCK
+    milestone: ready_for_dispatch
+  - name: IN_TRANSIT
+    milestone: in_transit
+  - name: DELIVERED
+    milestone: completed
+    terminal: true
+  - name: CANCELLED
+    milestone: cancelled
+    terminal: true
+
+facts:
+  paid:     { on: payments.completed }
+  approved: { by: [admin] }
+
+transitions:
+  # Payment and approval in either order; then straight to dispatch.
+  - { from: REQUESTED,      to: APPROVED,       auto: true, when: [paid, approved] }
+  - { from: APPROVED,       to: AWAITING_TRUCK, auto: true }
+  - { from: AWAITING_TRUCK, to: IN_TRANSIT,     on: dispatch.stop-completed, stop: first_pickup }
+  - { from: IN_TRANSIT,     to: DELIVERED,      on: dispatch.stop-completed, stop: last_stop }
+
+  - { from: "*",                   to: CANCELLED, on: payments.failed }
+  - { from: [REQUESTED, APPROVED], to: CANCELLED, by: [customer] }
+  - { from: "*",                   to: CANCELLED, by: [admin] }

@@ -1,0 +1,23 @@
+# Demo data for the courier pack (tools/seed) and the delivery tools/e2e
+# books. Dev data only.
+customers:
+  - { name: Nangula Amutenya, email: nangula@example.com }
+  - { name: Tjiuee Kavari, email: tjiuee@example.com }
+
+# A mixed fleet in the Windhoek CBD. Capacity is what the capacity module
+# matches parcels against: grams and cubic centimetres.
+agents:
+  - { name: Johannes Shikongo, vehicle: bike, lat: -22.5700, lng: 17.0836, capacity_g: 15000, capacity_cm3: 60000 }
+  - { name: Maria Nakale, vehicle: scooter, lat: -22.5690, lng: 17.0820, capacity_g: 25000, capacity_cm3: 120000 }
+  - { name: Petrus Amupolo, vehicle: car, lat: -22.5710, lng: 17.0850, capacity_g: 150000, capacity_cm3: 800000 }
+  - { name: Selma Iipinge, vehicle: van, lat: -22.5720, lng: 17.0800, capacity_g: 900000, capacity_cm3: 6000000 }
+
+e2e:
+  customer: nangula@example.com
+  payment_method: cash
+  # Office in the CBD to a house in Klein Windhoek.
+  pickup: { lat: -22.5700, lng: 17.0836, label: Office }
+  dropoff: { lat: -22.5690, lng: 17.1000, label: Home }
+  packages:
+    - { description: Contract documents, quantity: 1, weight_g: 400, length_mm: 320, width_mm: 230, height_mm: 20 }
+    - { description: Laptop, quantity: 1, weight_g: 2600, length_mm: 400, width_mm: 300, height_mm: 90, declared_value_cents: 1800000 }

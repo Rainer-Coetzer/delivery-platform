@@ -170,8 +170,8 @@ func (h *Handlers) handleJobCancelled(ctx context.Context, env events.Envelope, 
 // milestone: in food that is payment and acceptance both in. It keys on
 // the milestone, not a state name, so a pack can call its states anything.
 func (h *Handlers) handleStatusChanged(ctx context.Context, env events.Envelope, data events.JobStatusChangedData) error {
-	if data.ToMilestone != lifecycle.Confirmed {
-		return nil
+	if data.ToMilestone != lifecycle.Confirmed || data.MerchantID == "" {
+		return nil // not the moment prep starts, or no merchant to prepare (freight)
 	}
 	return h.Pool.WithTx(ctx, func(tx pgx.Tx) error {
 		isNew, err := db.InsertIfNew(ctx, tx, env.EventID, env.EventType)

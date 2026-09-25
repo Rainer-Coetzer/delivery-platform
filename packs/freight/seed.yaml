@@ -1,0 +1,26 @@
+# Demo data for the freight pack (tools/seed) and the load tools/e2e books.
+# Dev data only.
+customers:
+  - { name: Kalahari Building Supplies, email: dispatch@kalahari.example.com }
+
+# Trucks at the Northern Industrial depot. Capacity is grams and cubic
+# centimetres: a 1-tonne bakkie, an 8-tonne rigid, a 30-tonne rig.
+agents:
+  - { name: Frans Hamutenya, vehicle: bakkie, lat: -22.5300, lng: 17.0700, capacity_g: 1000000, capacity_cm3: 4000000 }
+  - { name: Ndapewa Shilongo, vehicle: truck, lat: -22.5310, lng: 17.0720, capacity_g: 8000000, capacity_cm3: 40000000, capabilities: [tail_lift] }
+  - { name: Hendrik Van Wyk, vehicle: rig, lat: -22.5320, lng: 17.0740, capacity_g: 30000000, capacity_cm3: 90000000 }
+
+e2e:
+  customer: dispatch@kalahari.example.com
+  payment_method: cash
+  # Depot, two building sites, then back to the depot with the empties.
+  stops:
+    - { kind: pickup, lat: -22.5300, lng: 17.0700, label: Northern Industrial depot }
+    - { kind: dropoff, lat: -22.5900, lng: 17.0900, label: Olympia site }
+    - { kind: dropoff, lat: -22.6100, lng: 17.0600, label: Pionierspark site }
+    - { kind: return, lat: -22.5300, lng: 17.0700, label: Depot (empties) }
+  packages:
+    - { description: Cement pallet, quantity: 4, weight_g: 1000000, length_mm: 1200, width_mm: 1000, height_mm: 1100 }
+    - { description: Roof sheeting bundle, quantity: 2, weight_g: 350000, length_mm: 3600, width_mm: 900, height_mm: 300 }
+  # The waybill goes with the load (documents module).
+  document: { name: waybill.pdf, type: application/pdf }
