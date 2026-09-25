@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/auth"
+	"github.com/rainercoetzer/delivery-platform/pkg/blob"
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
@@ -43,6 +44,7 @@ type API struct {
 	Pack      *packs.Pack
 	Pricing   pricing.Policy
 	Payments  *payment.Set
+	Blobs     blob.Store // documents module
 	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
 	Auth func(http.Handler) http.Handler
 }
@@ -54,6 +56,9 @@ func (a *API) Routes(r chi.Router) {
 		r.Get("/{id}", a.getJob)
 		r.Post("/{id}/transitions", a.transition)
 		r.Post("/{id}/facts/{fact}", a.setFact)
+		r.Post("/{id}/documents", a.uploadDocument)
+		r.Get("/{id}/documents", a.listDocuments)
+		r.Get("/{id}/documents/{docId}", a.downloadDocument)
 		r.Get("/", a.listJobs)
 	})
 }

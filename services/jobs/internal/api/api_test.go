@@ -81,6 +81,8 @@ func TestRouteRoles(t *testing.T) {
 		{"customer job without merchant", customer, "POST", "/jobs", `{"paymentMethod":"cash"}`, 400},
 		{"transition without a target", customer, "POST", "/jobs/o1/transitions", `{}`, 400},
 		{"approval on a pack without the module", customer, "POST", "/jobs/o1/facts/approved", ``, 404},
+		{"documents on a pack without the module", customer, "POST", "/jobs/o1/documents?name=x.pdf", ``, 404},
+		{"no token lists documents", nil, "GET", "/jobs/o1/documents", ``, 401},
 		{"payment method the pack doesn't take", customer, "POST", "/jobs", `{"merchantId":"r1","paymentMethod":"bitcoin","dropoff":{"lat":-22.5,"lng":17.1}}`, 400}, // else it reaches the (nil) catalogue,
 	}
 	for _, c := range cases {
@@ -139,6 +141,30 @@ func TestPresentHidesPINs(t *testing.T) {
 		present(j, &c.caller)
 		if (j.Stops[0].PIN != "") != c.seesPIN || j.Stops[0].PinHash != "" {
 			t.Errorf("%s: pin %q hash %q", c.name, j.Stops[0].PIN, j.Stops[0].PinHash)
+		}
+	}
+}
+
+func TestDocName(t *testing.T) {
+	cases := []struct{ in, want, err string }{
+		{"waybill.pdf", "waybill.pdf", ""},
+		{"../../etc/passwd", "passwd", ""},
+		{`C:\Users\x\permit.png`, "permit.png", ""},
+		{`in"voice.pdf`, "invoice.pdf", ""},
+		{"", "", "give the document a name"},
+		{"/", "", "give the document a name"},
+		{strings.Repeat("a", 121), "", "at most 120"},
+	}
+	for _, c := range cases {
+		got, err := docName(c.in)
+		if c.err != "" {
+			if err == nil || !strings.Contains(err.Error(), c.err) {
+				t.Errorf("%q: want error %q, got %q %v", c.in, c.err, got, err)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("%q: got %q %v, want %q", c.in, got, err, c.want)
 		}
 	}
 }
