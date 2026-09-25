@@ -152,6 +152,9 @@ type publicConfig struct {
 type brandInfo struct {
 	*brand.Brand
 	LogoURL string `json:"logoUrl,omitempty"`
+	// LogoType is the logo's media type: the URL has no extension, and the
+	// app draws an SVG with a different widget from a PNG.
+	LogoType string `json:"logoType,omitempty"`
 }
 
 // configHandler serves the public configuration in the caller's locale:
@@ -172,8 +175,8 @@ func configHandler(b *brand.Brand, p *packs.Pack, paymentMethods []string) http.
 		}
 		cfg := publicConfig{Brand: brandInfo{Brand: b}, PublicConfig: p.Config(locale, paymentMethods)}
 		cfg.Roles = b.EnabledRoles(p)
-		if path, _ := b.LogoFile(); path != "" {
-			cfg.Brand.LogoURL = "/brand/logo"
+		if path, ct := b.LogoFile(); path != "" {
+			cfg.Brand.LogoURL, cfg.Brand.LogoType = "/brand/logo", ct
 		}
 		// It changes only when the brand or pack does (a redeploy): let
 		// clients and proxies cache it briefly.

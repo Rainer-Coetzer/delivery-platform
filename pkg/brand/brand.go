@@ -196,6 +196,9 @@ func (b *Brand) validate(dev bool) error {
 			add("colours.%s %q must be #RRGGBB", name, c)
 		}
 	}
+	if p := b.Colours.contrastProblem(); p != "" {
+		add("%s", p)
+	}
 	if !currencyCode.MatchString(b.Currency.Code) {
 		add("currency.code %q must be an ISO 4217 code like NAD or ZAR", b.Currency.Code)
 	}

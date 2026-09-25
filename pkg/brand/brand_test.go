@@ -88,6 +88,8 @@ func TestLoadNamesEveryProblem(t *testing.T) {
 		{"area", "radius_km: 40", "radius_km: 0", "service_area[0]"},
 		{"pack", "pack: courier", "pack: \"\"", "pack is required"},
 		{"logo type", "pack: courier", "pack: courier\nlogo: logo.gif", "use a .png"},
+		{"unreadable text", `colours: { primary: "#112233" }`, `colours: { primary: "#112233", text: "#777777", background: "#888888" }`, "contrast 1.3:1"},
+		{"light text, no background", `colours: { primary: "#112233" }`, `colours: { primary: "#112233", text: "#EEEEEE" }`, "default (near-white) background"},
 		{"logo escape", "pack: courier", "pack: courier\nlogo: ../secret.png", "inside the config directory"},
 	}
 	for _, c := range cases {
@@ -204,5 +206,28 @@ func TestPackName(t *testing.T) {
 	}
 	if _, err := PackName(filepath.Join(t.TempDir(), "missing.yaml")); err == nil {
 		t.Fatal("missing file must fail")
+	}
+}
+
+func TestContrast(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want float64
+	}{
+		{"#000000", "#FFFFFF", 21},
+		{"#FFFFFF", "#000000", 21},
+		{"#777777", "#777777", 1},
+		{"#1D1D1F", "#FFFBF7", 16.3}, // the shipped brand
+	} {
+		if got := contrast(c.a, c.b); got < c.want-0.05 || got > c.want+0.05 {
+			t.Errorf("%s on %s: %.2f, want %.1f", c.a, c.b, got, c.want)
+		}
+	}
+	// A readable pair passes; format problems aren't reported twice.
+	if p := (Colours{Text: "#1D1D1F", Background: "#FFFBF7"}).contrastProblem(); p != "" {
+		t.Fatal(p)
+	}
+	if p := (Colours{Text: "red", Background: "#FFFFFF"}).contrastProblem(); p != "" {
+		t.Fatal(p)
 	}
 }

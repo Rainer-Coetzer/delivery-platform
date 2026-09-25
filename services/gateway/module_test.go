@@ -53,6 +53,7 @@ func TestConfigHandler(t *testing.T) {
 			Brand struct {
 				Name     string
 				LogoURL  string
+				LogoType string
 				Currency struct{ Code string }
 				Map      struct{ Tiles struct{ URL string } }
 			}
@@ -60,7 +61,7 @@ func TestConfigHandler(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &cfg); err != nil || rec.Code != 200 {
 			t.Fatalf("%d %v", rec.Code, err)
 		}
-		if cfg.Brand.Name != "Windhoek Eats" || cfg.Brand.LogoURL != "/brand/logo" || cfg.Brand.Currency.Code != "NAD" || cfg.Brand.Map.Tiles.URL == "" {
+		if cfg.Brand.Name != "Windhoek Eats" || cfg.Brand.LogoURL != "/brand/logo" || cfg.Brand.LogoType != "image/svg+xml" || cfg.Brand.Currency.Code != "NAD" || cfg.Brand.Map.Tiles.URL == "" {
 			t.Fatalf("brand: %+v", cfg.Brand)
 		}
 		if cfg.Locale != c.locale || cfg.Terms["agent"] != "courier" || cfg.Job.Stops != "point_to_point" {
