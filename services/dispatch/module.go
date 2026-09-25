@@ -47,7 +47,7 @@ func newModule(d app.Deps) (*app.Module, error) {
 	// telemetry, where a lost ping is replaced two seconds later.
 	simulator := &sim.LocationSimulator{Pool: d.Pool, Store: st, Producer: d.Bus, Log: d.Log, ETA: d.Strategies.ETA, StepMeters: stepMeters, Autopilot: autopilot}
 	return &app.Module{
-		Routes:    (&api.API{Pool: d.Pool, Store: st, Log: d.Log, Auth: d.Auth, Proof: d.Pack.Settings.Proof, Blobs: d.Blobs}).Routes,
+		Routes:    (&api.API{Pool: d.Pool, Store: st, Log: d.Log, Auth: d.Auth, Proof: d.Pack.Settings.Proof, Blobs: d.Blobs, Dispatcher: dispatcher}).Routes,
 		Outbox:    true,
 		Consumers: []app.Consumer{{Group: "dispatch-service", Topics: consumers.Topics, Handler: h.Handle}},
 		Workers:   []func(context.Context){retrier.Run, simulator.Run},

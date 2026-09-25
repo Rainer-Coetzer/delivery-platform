@@ -103,7 +103,7 @@ func blockInternal(next http.Handler) http.Handler {
 var proxiedPrefixes = map[string]string{
 	"/customers": "identity", "/users": "identity",
 	"/merchants": "merchant", "/jobs": "jobs", "/payments": "payment",
-	"/assignments": "dispatch", "/agents": "dispatch",
+	"/assignments": "dispatch", "/agents": "dispatch", "/offers": "dispatch",
 	"/notifications": "notification", "/admin": "reporting",
 }
 

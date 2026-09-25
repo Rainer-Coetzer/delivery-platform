@@ -18,6 +18,7 @@ import (
 
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/geo"
 	"github.com/rainercoetzer/delivery-platform/pkg/lifecycle"
 	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
 	dispatchstrategy "github.com/rainercoetzer/delivery-platform/pkg/strategy/dispatch"
@@ -115,6 +116,8 @@ func (h *Handlers) handleReady(ctx context.Context, env events.Envelope, route *
 			return err
 		}
 		switch outcome {
+		case Offered:
+			h.Log.Info("job offered to agents", "jobId", route.JobID)
 		case JobCancelled:
 			h.Log.Info("ready for dispatch, but the job is cancelled: not dispatching", "jobId", route.JobID)
 		case NoAgentFree:
@@ -171,6 +174,7 @@ const (
 	Assigned AssignOutcome = iota
 	NoAgentFree
 	JobCancelled
+	Offered // open_offer: out to agents; the first to accept gets it
 )
 
 // Dispatcher assigns jobs with the pack's dispatch strategy and ETA model.
@@ -228,12 +232,72 @@ func (d *Dispatcher) TryAssign(ctx context.Context, tx pgx.Tx, r *store.Route) (
 		return JobCancelled, nil
 	}
 
+	if offerer, ok := d.Strategy.(dispatchstrategy.Offerer); ok {
+		return d.offer(ctx, tx, r, offerer)
+	}
 	agent, err := d.claim(ctx, tx, r)
 	if err != nil || agent == nil {
 		return NoAgentFree, err
 	}
-	if err := store.MarkAgentBusy(ctx, tx, agent.ID); err != nil {
+	return Assigned, d.assign(ctx, tx, r, agent)
+}
+
+// ErrAgentNotAvailable: the chosen agent is busy, offline or locked by a
+// concurrent assignment.
+var ErrAgentNotAvailable = errors.New("agent is not available")
+
+// AssignAgent hands a queued job to a chosen agent: an admin assigning by
+// hand, or the agent who accepted its offer. The caller has locked the job
+// (store.LockJob) and holds its queue row.
+func (d *Dispatcher) AssignAgent(ctx context.Context, tx pgx.Tx, r *store.Route, agentID string) error {
+	if err := store.LockAvailable(ctx, tx, agentID); errors.Is(err, store.ErrNotFound) {
+		return ErrAgentNotAvailable
+	} else if err != nil {
+		return err
+	}
+	a, err := store.GetAgentTx(ctx, tx, agentID)
+	if err != nil {
+		return err
+	}
+	c := &store.Candidate{Agent: *a, DistanceMeters: geo.HaversineMeters(a.Lat, a.Lng, r.PickupLat, r.PickupLng)}
+	if err := d.assign(ctx, tx, r, c); err != nil {
+		return err
+	}
+	return store.DeletePending(ctx, tx, r.JobID) // takes the offers with it
+}
+
+// offer puts a job out to the nearest agents (the open_offer strategy):
+// the job waits in the queue, held back from the retrier until the offers
+// expire, and whoever accepts first gets it.
+func (d *Dispatcher) offer(ctx context.Context, tx pgx.Tx, r *store.Route, o dispatchstrategy.Offerer) (AssignOutcome, error) {
+	found, err := store.AvailableCandidates(ctx, tx, r, d.Capacity, maxCandidates)
+	if err != nil {
 		return 0, err
+	}
+	options := make([]dispatchstrategy.Candidate, len(found))
+	for i, c := range found {
+		options[i] = dispatchstrategy.Candidate{ID: c.ID, Vehicle: c.Vehicle, DistanceMeters: c.DistanceMeters, AssignmentsToday: c.AssignmentsToday,
+			CapacityGrams: c.CapacityGrams, CapacityCm3: c.CapacityCm3}
+	}
+	to := o.Offer(ctx, dispatchstrategy.Request{JobID: r.JobID, WeightGrams: r.WeightGrams, VolumeCm3: r.VolumeCm3}, options)
+	if len(to) == 0 {
+		return NoAgentFree, nil
+	}
+	if err := store.InsertPending(ctx, tx, r); err != nil { // no-op if already queued
+		return 0, err
+	}
+	ids := make([]string, len(to))
+	for i, c := range to {
+		ids[i] = c.ID
+	}
+	return Offered, store.SetOffers(ctx, tx, r.JobID, ids, d.now().Add(o.OfferFor()))
+}
+
+// assign creates the assignment for a claimed agent and announces it.
+func (d *Dispatcher) assign(ctx context.Context, tx pgx.Tx, r *store.Route, agent *store.Candidate) error {
+	jobID := r.JobID
+	if err := store.MarkAgentBusy(ctx, tx, agent.ID); err != nil {
+		return err
 	}
 
 	eta := d.ETA.Minutes(agent.DistanceMeters, agent.Vehicle)
@@ -244,7 +308,7 @@ func (d *Dispatcher) TryAssign(ctx context.Context, tx pgx.Tx, r *store.Route) (
 		Status: progress.StatusAssigned, EtaMinutes: eta,
 	}
 	if err := store.InsertAssignment(ctx, tx, assignment, r.Stops); err != nil {
-		return 0, err
+		return err
 	}
 
 	env, err := events.New(events.DispatchAssigned, jobID, events.AssignedData{
@@ -252,12 +316,9 @@ func (d *Dispatcher) TryAssign(ctx context.Context, tx pgx.Tx, r *store.Route) (
 		EtaMinutes: eta, AgentAt: events.Location{Lat: agent.Lat, Lng: agent.Lng},
 	})
 	if err != nil {
-		return 0, err
+		return err
 	}
-	if err := outbox.Insert(ctx, tx, env); err != nil {
-		return 0, err
-	}
-	return Assigned, nil
+	return outbox.Insert(ctx, tx, env)
 }
 
 // claim returns the locked agent the strategy picked, or nil if nobody

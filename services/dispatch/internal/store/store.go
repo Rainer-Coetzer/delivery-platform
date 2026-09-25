@@ -505,6 +505,8 @@ type Route struct {
 	// Scheduling module: don't assign before this (the pickup window
 	// opening, less the lead time). Nil: as soon as an agent is free.
 	NotBefore *time.Time
+	// open_offer: the job is out to agents until then.
+	OfferedUntil *time.Time
 	// Capacity module: the job's size and the capabilities it needs.
 	WeightGrams int64
 	VolumeCm3   int64
@@ -533,11 +535,37 @@ func DeletePending(ctx context.Context, tx pgx.Tx, jobID string) error {
 }
 
 // ListPending returns the queued jobs that may be assigned now: booked
-// ones wait until their not_before.
+// ones wait until their not_before, offered ones until the offer expires.
 func (s *Store) ListPending(ctx context.Context) ([]*Route, error) {
-	rows, err := s.pool.Query(ctx, `SELECT job_id, coalesce(merchant_id,''), pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq,
-		weight_g, volume_cm3, requires, stops, not_before, coalesce(customer_id,'')
-		FROM pending_assignments WHERE not_before IS NULL OR not_before <= now() ORDER BY created_at`)
+	return listPending(ctx, s.pool, `WHERE (not_before IS NULL OR not_before <= now())
+		AND (offered_until IS NULL OR offered_until <= now()) ORDER BY created_at`)
+}
+
+// ListAllPending is the whole queue, due or not, for an admin choosing
+// what to assign by hand.
+func (s *Store) ListAllPending(ctx context.Context) ([]*Route, error) {
+	return listPending(ctx, s.pool, "ORDER BY created_at")
+}
+
+// GetPendingForUpdate locks a queued job, for assigning it by hand or to
+// an agent who accepted its offer.
+func GetPendingForUpdate(ctx context.Context, tx pgx.Tx, jobID string) (*Route, error) {
+	out, err := listPending(ctx, tx, `WHERE job_id = $1 FOR UPDATE`, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, ErrNotFound
+	}
+	return out[0], nil
+}
+
+// listPending reads queue rows; tail is everything after FROM (WHERE,
+// ORDER BY, FOR UPDATE).
+func listPending(ctx context.Context, q db.Queryer, tail string, args ...any) ([]*Route, error) {
+	rows, err := q.Query(ctx, `SELECT job_id, coalesce(merchant_id,''), pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, pickup_seq, dropoff_seq,
+		weight_g, volume_cm3, requires, stops, not_before, coalesce(customer_id,''), offered_until
+		FROM pending_assignments `+tail, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list pending assignments: %w", err)
 	}
@@ -546,12 +574,87 @@ func (s *Store) ListPending(ctx context.Context) ([]*Route, error) {
 	for rows.Next() {
 		p := &Route{}
 		if err := rows.Scan(&p.JobID, &p.MerchantID, &p.PickupLat, &p.PickupLng, &p.DropoffLat, &p.DropoffLng, &p.PickupSeq, &p.DropoffSeq,
-			&p.WeightGrams, &p.VolumeCm3, &p.Requires, &p.Stops, &p.NotBefore, &p.CustomerID); err != nil {
+			&p.WeightGrams, &p.VolumeCm3, &p.Requires, &p.Stops, &p.NotBefore, &p.CustomerID, &p.OfferedUntil); err != nil {
 			return nil, fmt.Errorf("scan pending assignment: %w", err)
 		}
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// Offer is an open offer of a queued job to an agent.
+type Offer struct {
+	JobID      string    `json:"jobId"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+	PickupLat  float64   `json:"pickupLat"`
+	PickupLng  float64   `json:"pickupLng"`
+	DropoffLat float64   `json:"dropoffLat"`
+	DropoffLng float64   `json:"dropoffLng"`
+	Stops      int       `json:"stops"`
+	WeightG    int64     `json:"weightGrams,omitempty"`
+}
+
+// SetOffers replaces a queued job's offers with one per agent, open until
+// expires, and holds the job back from the retrier until then.
+func SetOffers(ctx context.Context, tx pgx.Tx, jobID string, agentIDs []string, expires time.Time) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM assignment_offers WHERE job_id = $1`, jobID); err != nil {
+		return fmt.Errorf("clear offers for job %s: %w", jobID, err)
+	}
+	for _, id := range agentIDs {
+		if _, err := tx.Exec(ctx, `INSERT INTO assignment_offers (job_id, agent_id, expires_at) VALUES ($1,$2,$3)`, jobID, id, expires); err != nil {
+			return fmt.Errorf("offer job %s to agent %s: %w", jobID, id, err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE pending_assignments SET offered_until = $2 WHERE job_id = $1`, jobID, expires); err != nil {
+		return fmt.Errorf("hold offered job %s: %w", jobID, err)
+	}
+	return nil
+}
+
+// HasOpenOffer reports whether agentID holds an unexpired offer of jobID.
+func HasOpenOffer(ctx context.Context, tx pgx.Tx, jobID, agentID string) (bool, error) {
+	var ok bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM assignment_offers WHERE job_id = $1 AND agent_id = $2 AND expires_at > now())`,
+		jobID, agentID).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("check offer of job %s to agent %s: %w", jobID, agentID, err)
+	}
+	return ok, nil
+}
+
+// OffersFor lists an agent's open offers, soonest to expire first.
+func (s *Store) OffersFor(ctx context.Context, agentID string) ([]Offer, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT o.job_id, o.expires_at, p.pickup_lat, p.pickup_lng, p.dropoff_lat, p.dropoff_lng, jsonb_array_length(p.stops), p.weight_g
+		FROM assignment_offers o JOIN pending_assignments p ON p.job_id = o.job_id
+		WHERE o.agent_id = $1 AND o.expires_at > now() ORDER BY o.expires_at`, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("list offers for agent %s: %w", agentID, err)
+	}
+	defer rows.Close()
+	out := []Offer{}
+	for rows.Next() {
+		var o Offer
+		if err := rows.Scan(&o.JobID, &o.ExpiresAt, &o.PickupLat, &o.PickupLng, &o.DropoffLat, &o.DropoffLng, &o.Stops, &o.WeightG); err != nil {
+			return nil, fmt.Errorf("scan offer: %w", err)
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// GetAgentTx loads an agent inside tx.
+func GetAgentTx(ctx context.Context, tx pgx.Tx, id string) (*Agent, error) {
+	d := &Agent{}
+	err := tx.QueryRow(ctx, `SELECT id, name, vehicle, status, lat, lng, coalesce(capacity_g,0), coalesce(capacity_cm3,0), capabilities
+		FROM agents WHERE id=$1`, id).Scan(&d.ID, &d.Name, &d.Vehicle, &d.Status, &d.Lat, &d.Lng, &d.CapacityGrams, &d.CapacityCm3, &d.Capabilities)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get agent %s: %w", id, err)
+	}
+	return d, nil
 }
 
 func stopsJSON(s []events.Stop) []events.Stop {

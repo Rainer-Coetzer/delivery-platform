@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/strategy/strategytest"
 )
@@ -50,7 +51,10 @@ func TestBootErrors(t *testing.T) {
 	for _, c := range []struct{ name, params, want string }{
 		{"least_loaded", `{}`, "within_km must be > 0"},
 		{"nearest", `{radius: 3}`, "field radius not found"},
-		{"open_offer", ``, `unknown dispatch strategy "open_offer" (registered: capacity_aware, least_loaded, nearest)`},
+		{"teleport", ``, `unknown dispatch strategy "teleport" (registered: capacity_aware, least_loaded, manual, nearest, open_offer)`},
+		{"open_offer", `{offer_to: 0, expires_seconds: 60, within_km: 5}`, "offer_to must be >= 1"},
+		{"open_offer", `{offer_to: 3, expires_seconds: 0, within_km: 5}`, "expires_seconds must be >= 1"},
+		{"open_offer", `{offer_to: 3, expires_seconds: 60}`, "within_km must be > 0"},
 	} {
 		if _, err := Build(c.name, strategytest.Params(t, "dispatch", c.params)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s %s: want %q, got %v", c.name, c.params, c.want, err)
@@ -84,5 +88,32 @@ func TestCapacityAware(t *testing.T) {
 	}
 	if got := pick(20_000_000, 1); got != "" {
 		t.Fatalf("nothing carries 20 t: got %s", got)
+	}
+}
+
+func TestManualNeverPicks(t *testing.T) {
+	if id, ok := pick(t, "manual", "", candidates); ok {
+		t.Fatalf("manual picked %s", id)
+	}
+}
+
+func TestOpenOffer(t *testing.T) {
+	s, err := Build("open_offer", strategytest.Params(t, "dispatch", `{offer_to: 2, expires_seconds: 45, within_km: 3}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, ok := s.(Offerer)
+	if !ok {
+		t.Fatal("open_offer must be an Offerer")
+	}
+	if _, picked := o.Pick(context.Background(), Request{}, candidates); picked {
+		t.Fatal("open_offer never picks: the agents accept")
+	}
+	got := o.Offer(context.Background(), Request{}, candidates)
+	if len(got) != 2 || got[0].ID != "near-busy" || got[1].ID != "mid-idle" || o.OfferFor() != 45*time.Second {
+		t.Fatalf("offers to the 2 nearest in range: %+v, for %v", got, o.OfferFor())
+	}
+	if got := o.Offer(context.Background(), Request{}, candidates[3:]); len(got) != 0 {
+		t.Fatalf("nobody in range, nobody asked: %+v", got)
 	}
 }

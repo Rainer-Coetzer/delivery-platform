@@ -28,6 +28,13 @@ func TestRouteRoles(t *testing.T) {
 		{"no token sends proof", nil, "POST", "/assignments/a1/stops/0/proof", "", 401},
 		{"no token views proof", nil, "GET", "/assignments/a1/stops/0/proof", "", 401},
 		{"proof on a pack without the module", drv1, "POST", "/assignments/a1/stops/0/proof", "", 404},
+		{"customer assigns a job", customer, "POST", "/assignments", `{"jobId":"j","agentId":"a"}`, 403},
+		{"agent assigns a job", drv1, "POST", "/assignments", `{"jobId":"j","agentId":"drv1"}`, 403},
+		{"agent reads the queue", drv1, "GET", "/assignments/queue", "", 403},
+		{"customer accepts an offer", customer, "POST", "/offers/j1/accept", "", 403},
+		{"unlinked agent accepts an offer", unlinked, "POST", "/offers/j1/accept", "", 403},
+		{"agent reads another agent's offers", drv1, "GET", "/agents/drv2/offers", "", 403},
+		{"no token accepts an offer", nil, "POST", "/offers/j1/accept", "", 401},
 		{"stop number isn't a number", drv1, "POST", "/assignments/a1/stops/first/completed", "", 400},
 		{"agent registers with negative capacity", &auth.Claims{Role: auth.RoleAdmin}, "POST", "/agents", `{"name":"x","capacityGrams":-1}`, 400},
 	}, func(c *auth.Claims) func(chi.Router) { return (&API{Auth: as(c)}).Routes })

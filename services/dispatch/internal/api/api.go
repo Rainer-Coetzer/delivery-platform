@@ -18,6 +18,7 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/db"
 	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
 	"github.com/rainercoetzer/delivery-platform/pkg/packs"
+	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/consumers"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/progress"
 	"github.com/rainercoetzer/delivery-platform/services/dispatch/internal/store"
 )
@@ -28,6 +29,8 @@ type API struct {
 	Log   *slog.Logger
 	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
 	Auth func(http.Handler) http.Handler
+	// Dispatcher assigns queued jobs by hand and on accepted offers.
+	Dispatcher *consumers.Dispatcher
 	// Proof module: nil when the pack has none. Blobs holds the images.
 	Proof *packs.ProofSettings
 	Blobs blob.Store
@@ -44,10 +47,17 @@ func (a *API) Routes(r chi.Router) {
 			r.Use(ownAgent)
 			r.Patch("/status", a.setAgentStatus)
 			r.Patch("/location", a.reportLocation)
+			r.Get("/offers", a.listOffers)
 		})
+	})
+	r.Route("/offers", func(r chi.Router) {
+		r.Use(a.Auth)
+		r.Post("/{jobId}/accept", a.acceptOffer)
 	})
 	r.Route("/assignments", func(r chi.Router) {
 		r.Use(a.Auth)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/", a.assignByHand)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Get("/queue", a.listQueue)
 		r.Get("/{jobId}", a.getAssignment)
 		r.Post("/{id}/stops/{seq}/completed", a.stopCompleted)
 		r.Post("/{id}/stops/{seq}/proof", a.submitProof)
