@@ -69,3 +69,16 @@ terminology:
     state.IN_TRANSIT: On the way
     state.DELIVERED: Delivered
     state.CANCELLED: Cancelled
+  af:
+    job: aflewering
+    jobs: aflewerings
+    agent: koerier
+    agents: koeriers
+    assignment: rit
+    line: pakkie
+    lines: pakkies
+    state.BOOKED: Bespreek
+    state.FINDING_COURIER: Soek 'n koerier
+    state.IN_TRANSIT: Op pad
+    state.DELIVERED: Afgelewer
+    state.CANCELLED: Gekanselleer

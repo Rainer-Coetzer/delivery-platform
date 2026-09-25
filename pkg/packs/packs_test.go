@@ -34,6 +34,30 @@ func TestShippedPacksLoad(t *testing.T) {
 	}
 }
 
+// The app ships English and Afrikaans (apps/delivery_app/lib/l10n), so
+// every shipped pack says each of its words in both: otherwise an
+// Afrikaans screen shows an English noun in the middle of a sentence.
+// A buyer's own pack may translate less; words it leaves out fall back
+// to English.
+func TestShippedPacksSpeakEveryAppLocale(t *testing.T) {
+	for _, n := range List(packfs.FS) {
+		p, err := Load(packfs.FS, n, known)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for key := range p.Terminology["en"] {
+			if _, ok := p.Terminology["af"][key]; !ok {
+				t.Errorf("pack %s: %q has no af word", n, key)
+			}
+		}
+		for key := range p.Terminology["af"] {
+			if _, ok := p.Terminology["en"][key]; !ok {
+				t.Errorf("pack %s: af %q has no en word (a typo?)", n, key)
+			}
+		}
+	}
+}
+
 func TestFoodTerminology(t *testing.T) {
 	p, err := Load(packfs.FS, "food", known)
 	if err != nil {

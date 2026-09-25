@@ -73,3 +73,18 @@ terminology:
     state.IN_TRANSIT: In transit
     state.DELIVERED: Delivered
     state.CANCELLED: Cancelled
+  af:
+    job: vrag
+    jobs: vragte
+    agent: bestuurder
+    agents: bestuurders
+    assignment: rit
+    line: item
+    lines: items
+    stop: aflaaipunt
+    state.REQUESTED: Aangevra
+    state.APPROVED: Goedgekeur
+    state.AWAITING_TRUCK: Wag vir 'n trok
+    state.IN_TRANSIT: Onderweg
+    state.DELIVERED: Afgelewer
+    state.CANCELLED: Gekanselleer

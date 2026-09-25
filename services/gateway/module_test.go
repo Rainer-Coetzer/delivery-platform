@@ -36,11 +36,12 @@ func TestConfigHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := configHandler(b, p, []string{"card", "cash"})
-	for _, c := range []struct{ query, acceptLanguage, locale string }{
-		{"", "", "en"},
-		{"", "de-DE,de;q=0.9", "en"}, // the brand has no German: its default
-		{"?locale=EN", "", "en"},
-		{"?locale=af", "", "af"},
+	for _, c := range []struct{ query, acceptLanguage, locale, agent string }{
+		{"", "", "en", "courier"},
+		{"", "de-DE,de;q=0.9", "en", "courier"}, // the brand has no German: its default
+		{"?locale=EN", "", "en", "courier"},
+		{"?locale=af", "", "af", "koerier"},
+		{"", "af-ZA,af;q=0.9", "af", "koerier"},
 	} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/config"+c.query, nil)
@@ -64,7 +65,7 @@ func TestConfigHandler(t *testing.T) {
 		if cfg.Brand.Name != "Windhoek Eats" || cfg.Brand.LogoURL != "/brand/logo" || cfg.Brand.LogoType != "image/svg+xml" || cfg.Brand.Currency.Code != "NAD" || cfg.Brand.Map.Tiles.URL == "" {
 			t.Fatalf("brand: %+v", cfg.Brand)
 		}
-		if cfg.Locale != c.locale || cfg.Terms["agent"] != "courier" || cfg.Job.Stops != "point_to_point" {
+		if cfg.Locale != c.locale || cfg.Terms["agent"] != c.agent || cfg.Job.Stops != "point_to_point" {
 			t.Fatalf("%+v: locale %s, agent %q", c, cfg.Locale, cfg.Terms["agent"])
 		}
 		if rec.Header().Get("Cache-Control") == "" {

@@ -55,3 +55,21 @@ terminology:
     state.OUT_FOR_DELIVERY: On the way
     state.DELIVERED: Delivered
     state.CANCELLED: Cancelled
+  af:
+    job: bestelling
+    jobs: bestellings
+    merchant: restaurant
+    merchants: restaurante
+    agent: bestuurder
+    agents: bestuurders
+    assignment: aflewering
+    catalogue: spyskaart
+    catalogue_item: gereg
+    line: item
+    state.CREATED: Geplaas
+    state.CONFIRMED: Bevestig
+    state.PREPARING: Word voorberei
+    state.READY: Gereed om af te haal
+    state.OUT_FOR_DELIVERY: Op pad
+    state.DELIVERED: Afgelewer
+    state.CANCELLED: Gekanselleer
