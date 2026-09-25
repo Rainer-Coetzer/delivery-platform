@@ -22,11 +22,11 @@ type API struct {
 }
 
 func (a *API) Routes(r chi.Router) {
-	r.With(a.Auth).Get("/payments/{orderId}", a.getPayment)
+	r.With(a.Auth).Get("/payments/{jobId}", a.getPayment)
 }
 
 func (a *API) getPayment(w http.ResponseWriter, r *http.Request) {
-	p, err := a.Store.GetByOrder(r.Context(), chi.URLParam(r, "orderId"))
+	p, err := a.Store.GetByJob(r.Context(), chi.URLParam(r, "jobId"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			httpx.NotFound(w, "payment not found")

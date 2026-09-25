@@ -18,7 +18,7 @@ import (
 )
 
 // Producer publishes envelopes to Kafka, keyed by partitionKey (usually the
-// orderId, so events for the same order land on the same partition and are
+// jobId, so events for the same order land on the same partition and are
 // read in order).
 type Producer struct {
 	client *kgo.Client

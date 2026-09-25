@@ -13,22 +13,22 @@ import (
 	"strings"
 
 	"github.com/rainercoetzer/delivery-platform/pkg/app"
-	"github.com/rainercoetzer/delivery-platform/services/admin"
-	"github.com/rainercoetzer/delivery-platform/services/customer"
-	"github.com/rainercoetzer/delivery-platform/services/delivery"
+	"github.com/rainercoetzer/delivery-platform/services/dispatch"
 	"github.com/rainercoetzer/delivery-platform/services/gateway"
+	"github.com/rainercoetzer/delivery-platform/services/identity"
+	"github.com/rainercoetzer/delivery-platform/services/jobs"
+	"github.com/rainercoetzer/delivery-platform/services/merchant"
 	"github.com/rainercoetzer/delivery-platform/services/notification"
-	"github.com/rainercoetzer/delivery-platform/services/order"
 	"github.com/rainercoetzer/delivery-platform/services/payment"
-	"github.com/rainercoetzer/delivery-platform/services/restaurant"
+	"github.com/rainercoetzer/delivery-platform/services/reporting"
 )
 
 // all lists every module in start order. Order matters only for startup
 // logs and migrations; modules talk through the bus and HTTP, never
 // directly, so none depends on another being built first.
 var all = []app.Definition{
-	customer.Definition, restaurant.Definition, order.Definition, payment.Definition,
-	delivery.Definition, notification.Definition, admin.Definition, gateway.Definition,
+	identity.Definition, merchant.Definition, jobs.Definition, payment.Definition,
+	dispatch.Definition, notification.Definition, reporting.Definition, gateway.Definition,
 }
 
 func main() {

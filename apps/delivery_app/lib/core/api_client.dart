@@ -41,6 +41,6 @@ class ApiClient {
   /// WebSocket URL for live order tracking, derived from the same base URL.
   String wsUrlForOrder(String orderId, String token) {
     final base = dio.options.baseUrl.replaceFirst('http', 'ws');
-    return '$base/ws?orderId=${Uri.encodeQueryComponent(orderId)}&token=${Uri.encodeQueryComponent(token)}';
+    return '$base/ws?jobId=${Uri.encodeQueryComponent(orderId)}&token=${Uri.encodeQueryComponent(token)}';
   }
 }

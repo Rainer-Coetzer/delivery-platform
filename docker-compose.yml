@@ -171,29 +171,29 @@ services:
     ports:
       - "127.0.0.1:8090:8080"
 
-  customer-service:
+  identity-service:
     <<: *go-service
-    build: { context: ., args: { CMD: ./services/customer/cmd } }
+    build: { context: ., args: { CMD: ./services/identity/cmd } }
     environment:
       <<: *service-env
-      DATABASE_URL: postgres://customer:customer@postgres:5432/customer_db?sslmode=disable
+      DATABASE_URL: postgres://identity:identity@postgres:5432/identity_db?sslmode=disable
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
 
-  restaurant-service:
+  merchant-service:
     <<: *go-service
-    build: { context: ., args: { CMD: ./services/restaurant/cmd } }
+    build: { context: ., args: { CMD: ./services/merchant/cmd } }
     environment:
       <<: *service-env
-      DATABASE_URL: postgres://restaurant:restaurant@postgres:5432/restaurant_db?sslmode=disable
+      DATABASE_URL: postgres://merchant:merchant@postgres:5432/merchant_db?sslmode=disable
 
-  order-service:
+  jobs-service:
     <<: *go-service
-    build: { context: ., args: { CMD: ./services/order/cmd } }
+    build: { context: ., args: { CMD: ./services/jobs/cmd } }
     environment:
       <<: *service-env
-      DATABASE_URL: postgres://order:order@postgres:5432/order_db?sslmode=disable
-      RESTAURANT_SERVICE_URL: http://restaurant-service:8080
+      DATABASE_URL: postgres://jobs:jobs@postgres:5432/jobs_db?sslmode=disable
+      MERCHANT_SERVICE_URL: http://merchant-service:8080
 
   payment-service:
     <<: *go-service
@@ -202,12 +202,12 @@ services:
       <<: *service-env
       DATABASE_URL: postgres://payment:payment@postgres:5432/payment_db?sslmode=disable
 
-  delivery-service:
+  dispatch-service:
     <<: *go-service
-    build: { context: ., args: { CMD: ./services/delivery/cmd } }
+    build: { context: ., args: { CMD: ./services/dispatch/cmd } }
     environment:
       <<: *service-env
-      DATABASE_URL: postgres://delivery:delivery@postgres:5432/delivery_db?sslmode=disable
+      DATABASE_URL: postgres://dispatch:dispatch@postgres:5432/dispatch_db?sslmode=disable
 
   notification-service:
     <<: *go-service
@@ -216,12 +216,12 @@ services:
       <<: *service-env
       DATABASE_URL: postgres://notification:notification@postgres:5432/notification_db?sslmode=disable
 
-  admin-service:
+  reporting-service:
     <<: *go-service
-    build: { context: ., args: { CMD: ./services/admin/cmd } }
+    build: { context: ., args: { CMD: ./services/reporting/cmd } }
     environment:
       <<: *service-env
-      DATABASE_URL: postgres://admin:admin@postgres:5432/admin_db?sslmode=disable
+      DATABASE_URL: postgres://reporting:reporting@postgres:5432/reporting_db?sslmode=disable
 
   gateway:
     <<: *go-service
@@ -229,22 +229,22 @@ services:
     environment:
       <<: *service-env
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
-      CUSTOMER_SERVICE_URL: http://customer-service:8080
-      RESTAURANT_SERVICE_URL: http://restaurant-service:8080
-      ORDER_SERVICE_URL: http://order-service:8080
+      IDENTITY_SERVICE_URL: http://identity-service:8080
+      MERCHANT_SERVICE_URL: http://merchant-service:8080
+      JOBS_SERVICE_URL: http://jobs-service:8080
       PAYMENT_SERVICE_URL: http://payment-service:8080
-      DELIVERY_SERVICE_URL: http://delivery-service:8080
+      DISPATCH_SERVICE_URL: http://dispatch-service:8080
       NOTIFICATION_SERVICE_URL: http://notification-service:8080
-      ADMIN_SERVICE_URL: http://admin-service:8080
+      REPORTING_SERVICE_URL: http://reporting-service:8080
     ports: ["${GATEWAY_HOST_PORT:-8080}:8080"] # the only public entry point in `full`
     depends_on:
-      customer-service: { condition: service_healthy }
-      restaurant-service: { condition: service_healthy }
-      order-service: { condition: service_healthy }
+      identity-service: { condition: service_healthy }
+      merchant-service: { condition: service_healthy }
+      jobs-service: { condition: service_healthy }
       payment-service: { condition: service_healthy }
-      delivery-service: { condition: service_healthy }
+      dispatch-service: { condition: service_healthy }
       notification-service: { condition: service_healthy }
-      admin-service: { condition: service_healthy }
+      reporting-service: { condition: service_healthy }
 
   prometheus:
     profiles: ["full"]

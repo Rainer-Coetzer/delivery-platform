@@ -1,4 +1,4 @@
-// Package consumers charges an order when it is created and refunds it when
+// Package consumers charges a job when it is created and refunds it when
 // it is cancelled after a successful charge.
 package consumers
 
@@ -23,14 +23,14 @@ type Handlers struct {
 
 func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 	switch env.EventType {
-	case events.OrderCreated:
-		data, err := events.Decode[events.OrderCreatedData](env)
+	case events.JobCreated:
+		data, err := events.Decode[events.JobCreatedData](env)
 		if err != nil {
 			return err
 		}
 		return h.charge(ctx, env, data)
-	case events.OrderCancelled:
-		data, err := events.Decode[events.OrderCancelledData](env)
+	case events.JobCancelled:
+		data, err := events.Decode[events.JobCancelledData](env)
 		if err != nil {
 			return err
 		}
@@ -40,7 +40,7 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 	}
 }
 
-func (h *Handlers) charge(ctx context.Context, env events.Envelope, data events.OrderCreatedData) error {
+func (h *Handlers) charge(ctx context.Context, env events.Envelope, data events.JobCreatedData) error {
 	return h.Pool.WithTx(ctx, func(tx pgx.Tx) error {
 		isNew, err := db.InsertIfNew(ctx, tx, env.EventID, env.EventType)
 		if err != nil {
@@ -56,7 +56,7 @@ func (h *Handlers) charge(ctx context.Context, env events.Envelope, data events.
 			status = "FAILED"
 		}
 		p := &store.Payment{
-			ID: uuid.NewString(), OrderID: data.OrderID, IdempotencyKey: data.OrderID,
+			ID: uuid.NewString(), JobID: data.JobID, IdempotencyKey: data.JobID,
 			CustomerID: data.CustomerID, AmountCents: data.TotalCents, Method: data.PaymentMethod,
 			Status: status, FailureReason: reason,
 		}
@@ -65,7 +65,7 @@ func (h *Handlers) charge(ctx context.Context, env events.Envelope, data events.
 			return err
 		}
 		if existed {
-			h.Log.Info("order already charged, skipping duplicate authorization", "orderId", data.OrderID)
+			h.Log.Info("job already charged, skipping duplicate authorization", "jobId", data.JobID)
 			return nil
 		}
 
@@ -73,8 +73,8 @@ func (h *Handlers) charge(ctx context.Context, env events.Envelope, data events.
 		if !approved {
 			topic = events.PaymentFailed
 		}
-		out, err := events.New(topic, data.OrderID, events.PaymentData{
-			OrderID: data.OrderID, PaymentID: p.ID, AmountCents: data.TotalCents, Reason: reason,
+		out, err := events.New(topic, data.JobID, events.PaymentData{
+			JobID: data.JobID, PaymentID: p.ID, AmountCents: data.TotalCents, Reason: reason,
 		})
 		if err != nil {
 			return err
@@ -83,7 +83,7 @@ func (h *Handlers) charge(ctx context.Context, env events.Envelope, data events.
 	})
 }
 
-func (h *Handlers) refund(ctx context.Context, env events.Envelope, data events.OrderCancelledData) error {
+func (h *Handlers) refund(ctx context.Context, env events.Envelope, data events.JobCancelledData) error {
 	return h.Pool.WithTx(ctx, func(tx pgx.Tx) error {
 		isNew, err := db.InsertIfNew(ctx, tx, env.EventID, env.EventType)
 		if err != nil {
@@ -93,7 +93,7 @@ func (h *Handlers) refund(ctx context.Context, env events.Envelope, data events.
 			return nil
 		}
 
-		p, err := store.GetByOrderForUpdate(ctx, tx, data.OrderID)
+		p, err := store.GetByJobForUpdate(ctx, tx, data.JobID)
 		if err != nil {
 			if err == store.ErrNotFound {
 				return nil // never charged (e.g. rejected before payment ran) — nothing to refund
@@ -107,11 +107,11 @@ func (h *Handlers) refund(ctx context.Context, env events.Envelope, data events.
 		if err := store.MarkRefunded(ctx, tx, p.ID); err != nil {
 			return err
 		}
-		if err := store.InsertRefund(ctx, tx, uuid.NewString(), p.ID, data.OrderID, p.AmountCents); err != nil {
+		if err := store.InsertRefund(ctx, tx, uuid.NewString(), p.ID, data.JobID, p.AmountCents); err != nil {
 			return err
 		}
-		out, err := events.New(events.PaymentRefunded, data.OrderID, events.PaymentData{
-			OrderID: data.OrderID, PaymentID: p.ID, AmountCents: p.AmountCents, Reason: data.Reason,
+		out, err := events.New(events.PaymentRefunded, data.JobID, events.PaymentData{
+			JobID: data.JobID, PaymentID: p.ID, AmountCents: p.AmountCents, Reason: data.Reason,
 		})
 		if err != nil {
 			return err

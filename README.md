@@ -9,13 +9,16 @@ A distributed food delivery platform built with **Go** microservices, **Kafka**,
 | Service | Port | Owns |
 |---|---|---|
 | [gateway](services/gateway) | 8080 | JWT auth, reverse proxy, WebSocket hub for live tracking |
-| [customer](services/customer) | 8081 | Accounts (every role), addresses, order-history projection |
-| [restaurant](services/restaurant) | 8082 | Menus, stock, accept/reject decisions |
-| [order](services/order) | 8083 | The order state machine and Kafka event contract |
+| [identity](services/identity) | 8081 | Accounts (every role), addresses, job-history projection |
+| [merchant](services/merchant) | 8082 | Merchants, catalogues, stock, accept/reject decisions |
+| [jobs](services/jobs) | 8083 | The job lifecycle and the event contract |
 | [payment](services/payment) | 8084 | Simulated payment authorization and refunds |
-| [delivery](services/delivery) | 8085 | Driver assignment (PostGIS), tracking, location simulation |
+| [dispatch](services/dispatch) | 8085 | Agent assignment (PostGIS), tracking, location simulation |
 | [notification](services/notification) | 8086 | In-app notifications from every domain event |
-| [admin](services/admin) | 8087 | CQRS read-model reports (revenue, delivery times, driver stats) |
+| [reporting](services/reporting) | 8087 | CQRS read-model reports (revenue, completion times, agent stats) |
+
+The domain is generic (job, merchant, agent, assignment; ADR-0003). The
+`food` pack names them order, restaurant, driver and delivery on screen.
 
 ## Running it
 
@@ -81,13 +84,13 @@ for first-time platform setup (`flutter create`).
   per route ([ADR-0001](docs/adr/0001-identity-propagation.md)). Identity
   never comes from request bodies.
 - **Accounts.** Public sign-up creates customers only. An admin onboards
-  restaurants and drivers: they create the restaurant or driver, then its
+  merchants and agents: they create the merchant or agent, then its
   login with `POST /users` (`refId` links the two). The first admin comes
   from `BOOTSTRAP_ADMIN_EMAIL`/`BOOTSTRAP_ADMIN_PASSWORD`.
-- **Prices are computed on the server** from the restaurant's catalogue. The
-  restaurant re-checks item ownership and price on acceptance.
-- **Live tracking** (`/ws?orderId=...&token=...`) is only for the order's
-  customer, restaurant, assigned driver or an admin.
+- **Prices are computed on the server** from the merchant's catalogue. The
+  merchant re-checks item ownership and price on acceptance.
+- **Live tracking** (`/ws?jobId=...&token=...`) is only for the job's
+  customer, merchant, assigned agent or an admin.
 - **Fail fast.** With any `PROFILE` other than `dev`, services refuse to boot
   if `JWT_SECRET` is missing, short or a placeholder, or if `ALLOWED_ORIGINS`
   is empty or has wildcards. The code default is *not* dev, so forgetting
@@ -99,8 +102,8 @@ Demo logins after `./infra/seed/seed.sh` (all use `password123`, dev only):
 |---|---|
 | admin | `admin@example.com` (password `admin-dev-password`, from the dev overlay) |
 | customer | `nangula@example.com` |
-| restaurant | `owner+alldaykitchen@example.com` (and one per seeded restaurant) |
-| driver | `driver+johannesshikongo@example.com` (and one per seeded driver) |
+| merchant | `owner+alldaykitchen@example.com` (and one per seeded merchant) |
+| agent | `agent+johannesshikongo@example.com` (and one per seeded agent) |
 
 ## Development
 

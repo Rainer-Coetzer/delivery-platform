@@ -88,8 +88,8 @@ func TestMiddleware(t *testing.T) {
 }
 
 func TestRequireRoleAndActsAs(t *testing.T) {
-	h := RequireRole(RoleAdmin, RoleRestaurant)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	for role, want := range map[Role]int{RoleAdmin: 200, RoleRestaurant: 200, RoleCustomer: 403, RoleDriver: 403} {
+	h := RequireRole(RoleAdmin, RoleMerchant)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	for role, want := range map[Role]int{RoleAdmin: 200, RoleMerchant: 200, RoleCustomer: 403, RoleAgent: 403} {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req = req.WithContext(WithClaims(req.Context(), &Claims{UserID: "u", Role: role}))
 		rec := httptest.NewRecorder()
@@ -106,11 +106,11 @@ func TestRequireRoleAndActsAs(t *testing.T) {
 		ref   string
 		wants bool
 	}{
-		{"own restaurant", Claims{Role: RoleRestaurant, RefID: "r1"}, RoleRestaurant, "r1", true},
-		{"other restaurant", Claims{Role: RoleRestaurant, RefID: "r1"}, RoleRestaurant, "r2", false},
-		{"unlinked restaurant never matches empty id", Claims{Role: RoleRestaurant}, RoleRestaurant, "", false},
-		{"driver claiming restaurant", Claims{Role: RoleDriver, RefID: "r1"}, RoleRestaurant, "r1", false},
-		{"admin acts as anyone", Claims{Role: RoleAdmin}, RoleRestaurant, "r9", true},
+		{"own merchant", Claims{Role: RoleMerchant, RefID: "r1"}, RoleMerchant, "r1", true},
+		{"other merchant", Claims{Role: RoleMerchant, RefID: "r1"}, RoleMerchant, "r2", false},
+		{"unlinked merchant never matches empty id", Claims{Role: RoleMerchant}, RoleMerchant, "", false},
+		{"agent claiming merchant", Claims{Role: RoleAgent, RefID: "r1"}, RoleMerchant, "r1", false},
+		{"admin acts as anyone", Claims{Role: RoleAdmin}, RoleMerchant, "r9", true},
 	}
 	for _, c := range cases {
 		if got := c.c.ActsAs(c.role, c.ref); got != c.wants {

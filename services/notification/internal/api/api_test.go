@@ -17,12 +17,12 @@ func TestMayRead(t *testing.T) {
 	}{
 		{"own user inbox", auth.Claims{UserID: "u1", Role: auth.RoleCustomer}, "user:u1", true},
 		{"another user's inbox", auth.Claims{UserID: "u1", Role: auth.RoleCustomer}, "user:u2", false},
-		{"own restaurant inbox", auth.Claims{UserID: "o1", Role: auth.RoleRestaurant, RefID: "r1"}, "restaurant:r1", true},
-		{"another restaurant's inbox", auth.Claims{UserID: "o1", Role: auth.RoleRestaurant, RefID: "r1"}, "restaurant:r2", false},
-		{"customer guessing a restaurant inbox", auth.Claims{UserID: "u1", Role: auth.RoleCustomer, RefID: "r1"}, "restaurant:r1", false},
-		{"unlinked restaurant vs empty ref", auth.Claims{UserID: "o1", Role: auth.RoleRestaurant}, "restaurant:", false},
-		{"order inbox is admin-only for now", auth.Claims{UserID: "u1", Role: auth.RoleCustomer}, "order:o1", false},
-		{"admin reads anything", auth.Claims{Role: auth.RoleAdmin}, "order:o1", true},
+		{"own merchant inbox", auth.Claims{UserID: "o1", Role: auth.RoleMerchant, RefID: "r1"}, "merchant:r1", true},
+		{"another merchant's inbox", auth.Claims{UserID: "o1", Role: auth.RoleMerchant, RefID: "r1"}, "merchant:r2", false},
+		{"customer guessing a merchant inbox", auth.Claims{UserID: "u1", Role: auth.RoleCustomer, RefID: "r1"}, "merchant:r1", false},
+		{"unlinked merchant vs empty ref", auth.Claims{UserID: "o1", Role: auth.RoleMerchant}, "merchant:", false},
+		{"job inbox is admin-only for now", auth.Claims{UserID: "u1", Role: auth.RoleCustomer}, "job:o1", false},
+		{"admin reads anything", auth.Claims{Role: auth.RoleAdmin}, "job:o1", true},
 	}
 	for _, c := range cases {
 		if got := MayRead(&c.c, c.recipient); got != c.want {

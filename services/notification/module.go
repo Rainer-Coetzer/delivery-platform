@@ -15,10 +15,10 @@ var Definition = app.Definition{
 	Name:       "notification",
 	Migrations: migrations.FS,
 	New: func(d app.Deps) (*app.Module, error) {
-		// Every topic except the high-frequency delivery.location stream.
+		// Every topic except the high-frequency dispatch.location stream.
 		topics := make([]string, 0, len(events.AllTopics))
 		for _, t := range events.AllTopics {
-			if t != events.DeliveryLocation {
+			if t != events.DispatchLocation {
 				topics = append(topics, t)
 			}
 		}

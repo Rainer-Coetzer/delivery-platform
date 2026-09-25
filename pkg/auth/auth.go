@@ -17,16 +17,16 @@ import (
 type Role string
 
 const (
-	RoleCustomer   Role = "customer"
-	RoleRestaurant Role = "restaurant"
-	RoleDriver     Role = "driver"
-	RoleAdmin      Role = "admin"
+	RoleCustomer Role = "customer"
+	RoleMerchant Role = "merchant"
+	RoleAgent    Role = "agent"
+	RoleAdmin    Role = "admin"
 )
 
 // ValidRole reports whether r is one of the four roles above.
 func ValidRole(r Role) bool {
 	switch r {
-	case RoleCustomer, RoleRestaurant, RoleDriver, RoleAdmin:
+	case RoleCustomer, RoleMerchant, RoleAgent, RoleAdmin:
 		return true
 	}
 	return false
@@ -36,9 +36,9 @@ type Claims struct {
 	UserID string `json:"sub"`
 	Role   Role   `json:"role"`
 	Name   string `json:"name"`
-	// RefID is the domain entity this account acts as: the restaurantId for
-	// a restaurant account, the driverId for a driver. Empty for customers
-	// and admins. Only an admin can set it (see customer service POST /users).
+	// RefID is the domain entity this account acts as: the merchantId for
+	// a merchant account, the agentId for an agent. Empty for customers
+	// and admins. Only an admin can set it (see identity POST /users).
 	RefID string `json:"refId,omitempty"`
 	jwt.RegisteredClaims
 }
@@ -55,9 +55,9 @@ func (c *Claims) Is(roles ...Role) bool {
 
 func (c *Claims) IsAdmin() bool { return c.Role == RoleAdmin }
 
-// ActsAs reports whether the caller is the restaurant or driver with the
+// ActsAs reports whether the caller is the merchant or agent with the
 // given id (their RefID), or an admin. Use it for "may this caller touch
-// restaurant X / delivery for driver Y" ownership checks.
+// merchant X / delivery for agent Y" ownership checks.
 func (c *Claims) ActsAs(role Role, refID string) bool {
 	if c.IsAdmin() {
 		return true

@@ -94,13 +94,13 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen> {
     if (data == null) return;
     setState(() {
       switch (type) {
-        case 'orders.status-changed':
+        case 'jobs.status-changed':
           _status = data['to'] as String? ?? _status;
           break;
-        case 'orders.cancelled':
+        case 'jobs.cancelled':
           _status = 'CANCELLED';
           break;
-        case 'delivery.location':
+        case 'dispatch.location':
           _driverAt = LatLng2((data['lat'] as num).toDouble(), (data['lng'] as num).toDouble());
           _etaMinutes = (data['etaMinutes'] as num?)?.toInt();
           break;

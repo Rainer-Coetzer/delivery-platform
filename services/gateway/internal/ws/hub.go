@@ -1,6 +1,6 @@
 // Package ws implements a small WebSocket hub that lets Flutter clients
-// subscribe to live updates for one order (status changes and, once a
-// driver is assigned, its location) without polling. The gateway's own
+// subscribe to live updates for one job (status changes and, once a
+// agent is assigned, its location) without polling. The gateway's own
 // Kafka consumer feeds Broadcast; this package has no Kafka knowledge of
 // its own.
 package ws
@@ -18,7 +18,7 @@ import (
 )
 
 // Hub fans out messages to every client subscribed to a room. A room is an
-// orderId: every client tracking that order's delivery joins the same room
+// jobId: every client tracking that job's delivery joins the same room
 // and receives the same broadcasts.
 type Hub struct {
 	mu    sync.RWMutex
@@ -29,10 +29,10 @@ type Hub struct {
 	// matches them against the Origin header's host, not the full URL).
 	// Same-origin requests are always allowed.
 	OriginPatterns []string
-	// Authorize reports whether the bearer of token may watch orderID,
+	// Authorize reports whether the bearer of token may watch jobID,
 	// returning an HTTP status: 200 to allow, anything else to refuse with
 	// that status. Required: a hub without it refuses every connection.
-	Authorize func(ctx context.Context, token, orderID string) int
+	Authorize func(ctx context.Context, token, jobID string) int
 }
 
 type client struct {
@@ -64,18 +64,18 @@ func (h *Hub) Broadcast(room string, msg []byte) {
 }
 
 // ServeHTTP authenticates and authorizes the caller, then upgrades the
-// connection and joins it to the room named by the "orderId" query
-// parameter. Before this, anyone with an order id could stream the
-// driver's live GPS (audit P0-7).
+// connection and joins it to the room named by the "jobId" query
+// parameter. Before this, anyone with a job id could stream the
+// agent's live GPS (audit P0-7).
 //
 // The token comes from ?token= because browsers can't set headers on a
 // WebSocket handshake; an Authorization header works too. Trap: never log
 // r.URL.RawQuery here or in middleware, it contains the token.
 // (httpx.RequestLogger logs only the path.)
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	room := r.URL.Query().Get("orderId")
+	room := r.URL.Query().Get("jobId")
 	if room == "" {
-		writeErr(w, http.StatusBadRequest, "bad_request", "orderId query parameter is required")
+		writeErr(w, http.StatusBadRequest, "bad_request", "jobId query parameter is required")
 		return
 	}
 	token := r.URL.Query().Get("token")
@@ -96,10 +96,10 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, status, "unauthorized", "invalid or expired token")
 		return
 	case http.StatusForbidden, http.StatusNotFound:
-		writeErr(w, http.StatusForbidden, "forbidden", "you can't watch this order")
+		writeErr(w, http.StatusForbidden, "forbidden", "you can't watch this job")
 		return
 	default:
-		writeErr(w, http.StatusBadGateway, "upstream_unavailable", "could not check access to this order")
+		writeErr(w, http.StatusBadGateway, "upstream_unavailable", "could not check access to this job")
 		return
 	}
 

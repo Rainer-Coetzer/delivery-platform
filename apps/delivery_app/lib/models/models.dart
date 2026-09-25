@@ -68,7 +68,7 @@ class MenuItem {
 
   factory MenuItem.fromJson(Map<String, dynamic> json) => MenuItem(
         id: json['id'] as String,
-        restaurantId: json['restaurantId'] as String,
+        restaurantId: json['merchantId'] as String,
         name: json['name'] as String,
         priceCents: (json['priceCents'] as num).toInt(),
         stockQty: (json['stockQty'] as num).toInt(),
@@ -92,14 +92,14 @@ class OrderItemDto {
   OrderItemDto({required this.menuItemId, required this.name, required this.quantity, required this.unitPriceCents});
 
   Map<String, dynamic> toJson() => {
-        'menuItemId': menuItemId,
+        'catalogueItemId': menuItemId,
         'name': name,
         'quantity': quantity,
         'unitPriceCents': unitPriceCents,
       };
 
   factory OrderItemDto.fromJson(Map<String, dynamic> json) => OrderItemDto(
-        menuItemId: json['menuItemId'] as String,
+        menuItemId: json['catalogueItemId'] as String,
         name: json['name'] as String,
         quantity: (json['quantity'] as num).toInt(),
         unitPriceCents: (json['unitPriceCents'] as num).toInt(),
@@ -136,8 +136,8 @@ class Order {
   factory Order.fromJson(Map<String, dynamic> json) => Order(
         id: json['id'] as String,
         customerId: json['customerId'] as String? ?? '',
-        restaurantId: json['restaurantId'] as String? ?? '',
-        restaurantName: json['restaurantName'] as String? ?? '',
+        restaurantId: json['merchantId'] as String? ?? '',
+        restaurantName: json['merchantName'] as String? ?? '',
         status: json['status'] as String,
         items: ((json['items']) as List<dynamic>? ?? [])
             .map((e) => OrderItemDto.fromJson(e as Map<String, dynamic>))
@@ -146,7 +146,7 @@ class Order {
         deliveryFeeCents: (json['deliveryFeeCents'] as num?)?.toInt() ?? 0,
         surgeMultiplier: (json['surgeMultiplier'] as num?)?.toDouble() ?? 1.0,
         totalCents: (json['totalCents'] as num?)?.toInt() ?? 0,
-        driverId: json['driverId'] as String? ?? '',
+        driverId: json['agentId'] as String? ?? '',
       );
 }
 
@@ -182,6 +182,6 @@ class NotificationDto {
         id: json['id'] as String,
         title: json['title'] as String,
         body: json['body'] as String,
-        orderId: json['orderId'] as String?,
+        orderId: json['jobId'] as String?,
       );
 }

@@ -1,14 +1,14 @@
 # Dev overlay: turns on the demo autopilot so a job completes with nobody
-# pressing buttons, speeds up the simulated drivers, and bootstraps a dev
+# pressing buttons, speeds up the simulated agents, and bootstraps a dev
 # admin. Works with either profile:
 #
 #   docker compose --profile lite -f docker-compose.yml -f docker-compose.dev.yml up --build
 #
-# Never use this outside local development: autopilot marks food ready and
-# delivered on a timer, and the admin password below is public.
+# Never use this outside local development: autopilot marks jobs ready and
+# completed on a timer, and the admin password below is public.
 x-dev-autopilot: &dev-autopilot
   DEMO_AUTOPILOT: "true"
-  AUTOPILOT_PREP_TIME: 5s  # a real kitchen is minutes; this keeps the demo short
+  AUTOPILOT_PREP_TIME: 5s  # a real prep is minutes; this keeps the demo short
   SIM_STEP_METERS: "300"   # ~150 m/s: absurd for a bike, right for a 1-minute demo
 
 x-dev-admin: &dev-admin
@@ -19,12 +19,12 @@ services:
   platform:
     environment:
       <<: [*dev-autopilot, *dev-admin]
-  customer-service:
+  identity-service:
     environment:
       <<: *dev-admin
-  restaurant-service:
+  merchant-service:
     environment:
       <<: *dev-autopilot
-  delivery-service:
+  dispatch-service:
     environment:
       <<: *dev-autopilot

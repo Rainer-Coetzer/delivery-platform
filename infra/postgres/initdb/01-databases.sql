@@ -6,42 +6,45 @@
 -- Plain statements on purpose: CREATE DATABASE can't run inside a DO block
 -- or function, which is how the first version of this file broke first boot.
 --
--- "order" is quoted because ORDER is a reserved word.
---
 -- Roles are ordinary logins that own only their own database (audit P0-7:
 -- they used to be SUPERUSER). The one thing that needed superuser, PostGIS,
 -- is created here instead, as the postgres superuser, before any service
--- migrates. The delivery migration's CREATE EXTENSION IF NOT EXISTS then
+-- migrates. The dispatch migration's CREATE EXTENSION IF NOT EXISTS then
 -- finds it and needs no privilege.
 
--- pilot profile: one database for the whole platform binary, one schema
+-- lite profile: one database for the whole platform binary, one schema
 -- per module inside it (ADR-0002). The platform role owns the database, so
 -- it can create those schemas itself at boot.
 CREATE ROLE platform     LOGIN PASSWORD 'platform';
 CREATE DATABASE platform OWNER platform;
 
 -- full profile: one role and database per microservice.
-CREATE ROLE customer     LOGIN PASSWORD 'customer';
-CREATE ROLE restaurant   LOGIN PASSWORD 'restaurant';
-CREATE ROLE "order"      LOGIN PASSWORD 'order';
+-- Renamed in Phase C (customer -> identity, restaurant -> merchant, order ->
+-- jobs, delivery -> dispatch, admin -> reporting). This file only runs on an
+-- empty data directory; an existing `full` install keeps its old database
+-- names, which is fine: DATABASE_URL names the database, and the tables
+-- inside are renamed by each service's own migrations.
+CREATE ROLE identity     LOGIN PASSWORD 'identity';
+CREATE ROLE merchant     LOGIN PASSWORD 'merchant';
+CREATE ROLE jobs         LOGIN PASSWORD 'jobs';
 CREATE ROLE payment      LOGIN PASSWORD 'payment';
-CREATE ROLE delivery     LOGIN PASSWORD 'delivery';
+CREATE ROLE dispatch     LOGIN PASSWORD 'dispatch';
 CREATE ROLE notification LOGIN PASSWORD 'notification';
-CREATE ROLE admin        LOGIN PASSWORD 'admin';
+CREATE ROLE reporting    LOGIN PASSWORD 'reporting';
 
-CREATE DATABASE customer_db     OWNER customer;
-CREATE DATABASE restaurant_db   OWNER restaurant;
-CREATE DATABASE order_db        OWNER "order";
+CREATE DATABASE identity_db     OWNER identity;
+CREATE DATABASE merchant_db     OWNER merchant;
+CREATE DATABASE jobs_db         OWNER jobs;
 CREATE DATABASE payment_db      OWNER payment;
-CREATE DATABASE delivery_db     OWNER delivery;
+CREATE DATABASE dispatch_db     OWNER dispatch;
 CREATE DATABASE notification_db OWNER notification;
-CREATE DATABASE admin_db        OWNER admin;
+CREATE DATABASE reporting_db    OWNER reporting;
 
-\connect delivery_db
+\connect dispatch_db
 CREATE EXTENSION IF NOT EXISTS postgis;
 
 -- In the platform database PostGIS lives in public; every module's
--- search_path is "<module>, public" (pkg/db.OpenSchema), so the delivery
+-- search_path is "<module>, public" (pkg/db.OpenSchema), so the dispatch
 -- module still finds the geography type.
 \connect platform
 CREATE EXTENSION IF NOT EXISTS postgis;

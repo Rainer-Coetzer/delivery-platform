@@ -57,16 +57,16 @@ func TestInprocClient_RunsCalleeAuthAsTheUser(t *testing.T) {
 func TestInprocClient_FromInsideAHandler(t *testing.T) {
 	r := chi.NewRouter()
 	client := NewInprocClient(r)
-	r.Get("/restaurants/{id}", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/merchants/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if _, leaked := auth.FromContext(r.Context()); leaked {
 			http.Error(w, "caller claims leaked into callee", 500)
 			return
 		}
-		_, _ = w.Write([]byte("restaurant " + chi.URLParam(r, "id")))
+		_, _ = w.Write([]byte("merchant " + chi.URLParam(r, "id")))
 	})
-	r.Post("/orders", func(w http.ResponseWriter, r *http.Request) {
+	r.Post("/jobs", func(w http.ResponseWriter, r *http.Request) {
 		ctx := auth.WithClaims(r.Context(), &auth.Claims{UserID: "caller"})
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, InternalBaseURL+"/restaurants/r1", nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, InternalBaseURL+"/merchants/r1", nil)
 		resp, err := client.Do(req)
 		if err != nil {
 			http.Error(w, err.Error(), 500)
@@ -77,13 +77,13 @@ func TestInprocClient_FromInsideAHandler(t *testing.T) {
 		_, _ = w.Write(body)
 	})
 
-	req, _ := http.NewRequest(http.MethodPost, InternalBaseURL+"/orders", nil)
+	req, _ := http.NewRequest(http.MethodPost, InternalBaseURL+"/jobs", nil)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 || string(body) != "restaurant r1" {
+	if resp.StatusCode != 200 || string(body) != "merchant r1" {
 		t.Fatalf("nested call: %d %q", resp.StatusCode, body)
 	}
 }

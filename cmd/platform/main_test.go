@@ -7,15 +7,15 @@ import (
 )
 
 func TestSelectModules(t *testing.T) {
-	all := []app.Definition{{Name: "customer"}, {Name: "order"}, {Name: "gateway"}}
+	all := []app.Definition{{Name: "customer"}, {Name: "job"}, {Name: "gateway"}}
 	cases := []struct {
 		list    string
 		want    []string
 		wantErr bool
 	}{
-		{"", []string{"customer", "order", "gateway"}, false},
-		{" order , gateway ", []string{"order", "gateway"}, false},
-		{"order,paymnet", nil, true}, // typo must fail, not silently drop payments
+		{"", []string{"customer", "job", "gateway"}, false},
+		{" job , gateway ", []string{"job", "gateway"}, false},
+		{"job,paymnet", nil, true}, // typo must fail, not silently drop payments
 	}
 	for _, c := range cases {
 		got, err := selectModules(c.list, all)

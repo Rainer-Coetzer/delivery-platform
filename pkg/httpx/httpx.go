@@ -71,7 +71,7 @@ func RequestLogger(service string, log *slog.Logger) func(http.Handler) http.Han
 
 			route := r.URL.Path
 			if rctx := chi.RouteContext(r.Context()); rctx != nil && rctx.RoutePattern() != "" {
-				route = rctx.RoutePattern() // e.g. "/orders/{id}" instead of "/orders/abc123", to keep the metric's cardinality bounded
+				route = rctx.RoutePattern() // e.g. "/jobs/{id}" instead of "/jobs/abc123", to keep the metric's cardinality bounded
 			}
 			obs.HTTPRequestsTotal.WithLabelValues(service, route, strconv.Itoa(ww.Status())).Inc()
 

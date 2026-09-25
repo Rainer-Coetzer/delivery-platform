@@ -24,7 +24,7 @@ func TestWithSearchPath_NoPlusInPath(t *testing.T) {
 }
 
 func TestValidSchema(t *testing.T) {
-	for name, want := range map[string]bool{"orders": true, "bus": true, "my_mod2": true, "Order": false, "a-b": false, "": false, "1x": false} {
+	for name, want := range map[string]bool{"jobs": true, "bus": true, "my_mod2": true, "Job": false, "a-b": false, "": false, "1x": false} {
 		if got := validSchema.MatchString(name); got != want {
 			t.Errorf("validSchema(%q) = %v, want %v", name, got, want)
 		}

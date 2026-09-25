@@ -21,13 +21,13 @@ func TestHubRefusesBeforeUpgrade(t *testing.T) {
 		authz func(context.Context, string, string) int
 		want  int
 	}{
-		{"no orderId", "?token=t", nil, 400},
-		{"no token", "?orderId=o1", nil, 401},
-		{"bad token", "?orderId=o1&token=t", func(context.Context, string, string) int { return 401 }, 401},
-		{"not your order", "?orderId=o1&token=t", func(context.Context, string, string) int { return 403 }, 403},
-		{"order not found looks the same as forbidden", "?orderId=o1&token=t", func(context.Context, string, string) int { return 404 }, 403},
-		{"order service down", "?orderId=o1&token=t", func(context.Context, string, string) int { return 502 }, 502},
-		{"no authorizer configured", "?orderId=o1&token=t", nil, 500},
+		{"no jobId", "?token=t", nil, 400},
+		{"no token", "?jobId=o1", nil, 401},
+		{"bad token", "?jobId=o1&token=t", func(context.Context, string, string) int { return 401 }, 401},
+		{"not your job", "?jobId=o1&token=t", func(context.Context, string, string) int { return 403 }, 403},
+		{"job not found looks the same as forbidden", "?jobId=o1&token=t", func(context.Context, string, string) int { return 404 }, 403},
+		{"job service down", "?jobId=o1&token=t", func(context.Context, string, string) int { return 502 }, 502},
+		{"no authorizer configured", "?jobId=o1&token=t", nil, 500},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -42,33 +42,33 @@ func TestHubRefusesBeforeUpgrade(t *testing.T) {
 	}
 }
 
-func TestOrderAccess(t *testing.T) {
+func TestJobAccess(t *testing.T) {
 	const secret = "test-secret-that-is-at-least-32-bytes-long"
 	issuer := auth.NewIssuer(secret, time.Hour)
 	good, _ := issuer.Issue("u1", auth.RoleCustomer, "N", "")
 
 	var sawAuth string
-	orders := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	jobs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawAuth = r.Header.Get("Authorization")
-		if r.URL.Path == "/orders/mine" {
+		if r.URL.Path == "/jobs/mine" {
 			w.WriteHeader(200)
 			return
 		}
 		w.WriteHeader(403)
 	}))
-	defer orders.Close()
+	defer jobs.Close()
 
-	oa := NewOrderAccess(orders.URL, orders.Client(), issuer)
+	oa := NewJobAccess(jobs.URL, jobs.Client(), issuer)
 	if got := oa.Authorize(context.Background(), "garbage", "mine"); got != 401 {
-		t.Fatalf("bad token: %d, want 401 without calling the order service", got)
+		t.Fatalf("bad token: %d, want 401 without calling the job service", got)
 	}
 	if got := oa.Authorize(context.Background(), good, "mine"); got != 200 {
-		t.Fatalf("own order: %d, want 200", got)
+		t.Fatalf("own job: %d, want 200", got)
 	}
 	if sawAuth != "Bearer "+good {
-		t.Fatalf("order service must be called as the user, got Authorization %q", sawAuth)
+		t.Fatalf("job service must be called as the user, got Authorization %q", sawAuth)
 	}
 	if got := oa.Authorize(context.Background(), good, "theirs"); got != 403 {
-		t.Fatalf("someone else's order: %d, want 403", got)
+		t.Fatalf("someone else's job: %d, want 403", got)
 	}
 }

@@ -25,21 +25,21 @@ import (
 // publishing to Kafka directly from request handlers or consumers.
 func Insert(ctx context.Context, tx pgx.Tx, env events.Envelope) error {
 	_, err := tx.Exec(ctx,
-		`INSERT INTO outbox (event_id, event_type, order_id, partition_key, payload, created_at)
+		`INSERT INTO outbox (event_id, event_type, job_id, partition_key, payload, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
-		env.EventID, env.EventType, nullIfEmpty(env.OrderID), partitionKey(env), mustJSON(env), env.Timestamp)
+		env.EventID, env.EventType, nullIfEmpty(env.JobID), partitionKey(env), mustJSON(env), env.Timestamp)
 	if err != nil {
 		return fmt.Errorf("insert outbox: %w", err)
 	}
 	return nil
 }
 
-// partitionKey defaults to orderId; callers that need a different key
-// (driver location, user registration) should have already put it in
-// OrderID when building the envelope, or use InsertWithKey.
+// partitionKey defaults to jobId; callers that need a different key
+// (agent location, user registration) should have already put it in
+// JobID when building the envelope, or use InsertWithKey.
 func partitionKey(env events.Envelope) string {
-	if env.OrderID != "" {
-		return env.OrderID
+	if env.JobID != "" {
+		return env.JobID
 	}
 	return env.EventID
 }

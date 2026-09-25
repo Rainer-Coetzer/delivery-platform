@@ -1,5 +1,5 @@
-// Package consumers turns every order/payment/delivery event into a
-// human-readable notification for the customer, restaurant or driver
+// Package consumers turns every job/payment/delivery event into a
+// human-readable notification for the customer, merchant or agent
 // involved, and logs it to the console and an "email" stub — real channels
 // would plug in here without touching any other service.
 package consumers
@@ -47,71 +47,71 @@ func (h *Handlers) Handle(ctx context.Context, env events.Envelope) error {
 
 // build maps an event to the notification it produces, or nil if this
 // service does not notify on that topic (e.g. the high-frequency
-// delivery.location stream).
+// dispatch.location stream).
 func build(env events.Envelope) (*store.Notification, error) {
 	switch env.EventType {
-	case events.OrderCreated:
-		d, err := events.Decode[events.OrderCreatedData](env)
+	case events.JobCreated:
+		d, err := events.Decode[events.JobCreatedData](env)
 		if err != nil {
 			return nil, err
 		}
 		return &store.Notification{
-			Recipient: "restaurant:" + d.RestaurantID, OrderID: d.OrderID, Channel: "in-app",
-			Title: "New order", Body: fmt.Sprintf("Order %s from %s, total N$%.2f", short(d.OrderID), d.CustomerName, cents(d.TotalCents)),
+			Recipient: "merchant:" + d.MerchantID, JobID: d.JobID, Channel: "in-app",
+			Title: "New job", Body: fmt.Sprintf("Job %s from %s, total N$%.2f", short(d.JobID), d.CustomerName, cents(d.TotalCents)),
 		}, nil
-	case events.OrderStatusChanged:
-		d, err := events.Decode[events.OrderStatusChangedData](env)
+	case events.JobStatusChanged:
+		d, err := events.Decode[events.JobStatusChangedData](env)
 		if err != nil {
 			return nil, err
 		}
 		return &store.Notification{
-			Recipient: "user:" + d.CustomerID, OrderID: d.OrderID, Channel: "in-app",
-			Title: "Order update", Body: fmt.Sprintf("Order %s is now %s", short(d.OrderID), d.To),
+			Recipient: "user:" + d.CustomerID, JobID: d.JobID, Channel: "in-app",
+			Title: "Job update", Body: fmt.Sprintf("Job %s is now %s", short(d.JobID), d.To),
 		}, nil
-	case events.OrderCancelled:
-		d, err := events.Decode[events.OrderCancelledData](env)
+	case events.JobCancelled:
+		d, err := events.Decode[events.JobCancelledData](env)
 		if err != nil {
 			return nil, err
 		}
 		return &store.Notification{
-			Recipient: "user:" + d.CustomerID, OrderID: d.OrderID, Channel: "in-app",
-			Title: "Order cancelled", Body: fmt.Sprintf("Order %s was cancelled: %s", short(d.OrderID), d.Reason),
+			Recipient: "user:" + d.CustomerID, JobID: d.JobID, Channel: "in-app",
+			Title: "Job cancelled", Body: fmt.Sprintf("Job %s was cancelled: %s", short(d.JobID), d.Reason),
 		}, nil
-	case events.RestaurantAccepted:
-		d, err := events.Decode[events.RestaurantDecisionData](env)
+	case events.MerchantAccepted:
+		d, err := events.Decode[events.MerchantDecisionData](env)
 		if err != nil {
 			return nil, err
 		}
-		return &store.Notification{Recipient: "order:" + d.OrderID, OrderID: d.OrderID, Channel: "in-app",
-			Title: "Order accepted", Body: "The restaurant accepted order " + short(d.OrderID)}, nil
-	case events.RestaurantRejected:
-		d, err := events.Decode[events.RestaurantDecisionData](env)
+		return &store.Notification{Recipient: "job:" + d.JobID, JobID: d.JobID, Channel: "in-app",
+			Title: "Job accepted", Body: "The merchant accepted job " + short(d.JobID)}, nil
+	case events.MerchantRejected:
+		d, err := events.Decode[events.MerchantDecisionData](env)
 		if err != nil {
 			return nil, err
 		}
-		return &store.Notification{Recipient: "order:" + d.OrderID, OrderID: d.OrderID, Channel: "in-app",
-			Title: "Order rejected", Body: "The restaurant rejected order " + short(d.OrderID) + ": " + d.Reason}, nil
+		return &store.Notification{Recipient: "job:" + d.JobID, JobID: d.JobID, Channel: "in-app",
+			Title: "Job rejected", Body: "The merchant rejected job " + short(d.JobID) + ": " + d.Reason}, nil
 	case events.PaymentFailed:
 		d, err := events.Decode[events.PaymentData](env)
 		if err != nil {
 			return nil, err
 		}
-		return &store.Notification{Recipient: "order:" + d.OrderID, OrderID: d.OrderID, Channel: "in-app",
-			Title: "Payment failed", Body: "Payment for order " + short(d.OrderID) + " failed: " + d.Reason}, nil
-	case events.DeliveryAssigned:
-		d, err := events.Decode[events.DeliveryAssignedData](env)
+		return &store.Notification{Recipient: "job:" + d.JobID, JobID: d.JobID, Channel: "in-app",
+			Title: "Payment failed", Body: "Payment for job " + short(d.JobID) + " failed: " + d.Reason}, nil
+	case events.DispatchAssigned:
+		d, err := events.Decode[events.AssignedData](env)
 		if err != nil {
 			return nil, err
 		}
-		return &store.Notification{Recipient: "order:" + d.OrderID, OrderID: d.OrderID, Channel: "in-app",
-			Title: "Driver assigned", Body: fmt.Sprintf("%s is on the way, ETA %d min", d.DriverName, d.EtaMinutes)}, nil
-	case events.DeliveryCompleted:
-		d, err := events.Decode[events.DeliveryProgressData](env)
+		return &store.Notification{Recipient: "job:" + d.JobID, JobID: d.JobID, Channel: "in-app",
+			Title: "Agent assigned", Body: fmt.Sprintf("%s is on the way, ETA %d min", d.AgentName, d.EtaMinutes)}, nil
+	case events.DispatchCompleted:
+		d, err := events.Decode[events.AssignmentProgressData](env)
 		if err != nil {
 			return nil, err
 		}
-		return &store.Notification{Recipient: "order:" + d.OrderID, OrderID: d.OrderID, Channel: "in-app",
-			Title: "Delivered", Body: "Order " + short(d.OrderID) + " has been delivered, enjoy!"}, nil
+		return &store.Notification{Recipient: "job:" + d.JobID, JobID: d.JobID, Channel: "in-app",
+			Title: "Delivered", Body: "Job " + short(d.JobID) + " has been delivered, enjoy!"}, nil
 	default:
 		return nil, nil
 	}

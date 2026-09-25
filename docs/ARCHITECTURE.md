@@ -1,5 +1,10 @@
 # Architecture
 
+> Written before Phase C renamed the domain (ADR-0003). Old name -> new:
+> customer -> identity, restaurant -> merchant, order -> jobs, delivery ->
+> dispatch, admin -> reporting; order -> job, driver -> agent, delivery ->
+> assignment, menu item -> catalogue item. The rewrite lands at the end of Phase C.
+
 A food delivery platform: Go microservices,
 Kafka, PostgreSQL/PostGIS, a Flutter client, all in Docker Compose. See
 [../README.md](../README.md) for how to run it, [AUDIT.md](AUDIT.md) for
@@ -39,7 +44,7 @@ flowchart LR
 
     CUST --> PGC[(customer_db)]
     REST --> PGR[(restaurant_db)]
-    ORD --> PGO[(order_db)]
+    ORD --> PGO[(jobs_db)]
     PAY --> PGP[(payment_db)]
     DEL --> PGD[(delivery_db + PostGIS)]
     NOTIF --> PGN[(notification_db)]
@@ -98,7 +103,7 @@ and the restaurant re-validates items and prices on acceptance.
   moves an assigned driver toward its current target every 2s and publishes
   `delivery.location` directly (bypassing the outbox — this is ephemeral
   telemetry, not a durable domain fact). A real driver's GPS ping
-  (`PATCH /drivers/{id}/location`) disables simulation for that delivery.
+  (`PATCH /agents/{id}/location`) disables simulation for that delivery.
 - **Surge pricing** is a pure function of open orders vs. an assumed free-driver
   count (`services/order/internal/domain.SurgeMultiplierFor`), applied to the
   delivery fee at order creation.

@@ -25,7 +25,7 @@ func (t inprocTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// A fresh context that keeps only cancellation. The caller's context is
 	// usually a handler's, carrying chi's routing state (chi then treats this
 	// call as a sub-router hop and routes the outer request's leftover path:
-	// a 404 that looks like "restaurant not found") and the caller's auth
+	// a 404 that looks like "merchant not found") and the caller's auth
 	// claims. Neither may leak into the callee, which must authenticate the
 	// forwarded token itself.
 	ctx, cancel := context.WithCancel(context.Background())

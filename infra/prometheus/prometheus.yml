@@ -6,10 +6,10 @@ scrape_configs:
     static_configs:
       - targets:
           - gateway:8080
-          - customer-service:8080
-          - restaurant-service:8080
-          - order-service:8080
+          - identity-service:8080
+          - merchant-service:8080
+          - jobs-service:8080
           - payment-service:8080
-          - delivery-service:8080
+          - dispatch-service:8080
           - notification-service:8080
-          - admin-service:8080
+          - reporting-service:8080

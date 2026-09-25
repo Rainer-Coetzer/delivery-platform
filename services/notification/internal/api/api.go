@@ -27,8 +27,8 @@ func (a *API) Routes(r chi.Router) {
 }
 
 // MayRead reports whether caller may read the inbox named by recipient:
-// their own user inbox, their restaurant's or driver's inbox via refId, or
-// anything for an admin. "order:<id>" inboxes are admin-only until Phase 4
+// their own user inbox, their merchant's or agent's inbox via refId, or
+// anything for an admin. "job:<id>" inboxes are admin-only until Phase 4
 // replaces that recipient scheme (audit P1: nothing could read them anyway).
 func MayRead(caller *auth.Claims, recipient string) bool {
 	switch {
@@ -38,10 +38,10 @@ func MayRead(caller *auth.Claims, recipient string) bool {
 		return true
 	case caller.RefID == "":
 		return false
-	case recipient == "restaurant:"+caller.RefID:
-		return caller.Role == auth.RoleRestaurant
-	case recipient == "driver:"+caller.RefID:
-		return caller.Role == auth.RoleDriver
+	case recipient == "merchant:"+caller.RefID:
+		return caller.Role == auth.RoleMerchant
+	case recipient == "agent:"+caller.RefID:
+		return caller.Role == auth.RoleAgent
 	}
 	return false
 }
@@ -49,7 +49,7 @@ func MayRead(caller *auth.Claims, recipient string) bool {
 func (a *API) list(w http.ResponseWriter, r *http.Request) {
 	recipient := r.URL.Query().Get("recipient")
 	if recipient == "" {
-		httpx.BadRequest(w, "recipient query parameter is required, e.g. user:<id> or restaurant:<id>")
+		httpx.BadRequest(w, "recipient query parameter is required, e.g. user:<id> or merchant:<id>")
 		return
 	}
 	if !MayRead(auth.MustFromContext(r.Context()), recipient) {

@@ -158,7 +158,7 @@ func TestFood_RoleCancels(t *testing.T) {
 	}{
 		{"CREATED", "customer", true},
 		{"CONFIRMED", "customer", true},
-		{"PREPARING", "customer", false}, // kitchen started
+		{"PREPARING", "customer", false}, // prep started
 		{"OUT_FOR_DELIVERY", "admin", true},
 		{"CREATED", "agent", false},
 	}

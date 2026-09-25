@@ -20,7 +20,7 @@ class AdminDashboardScreen extends ConsumerWidget {
         builder: (context, snapshot) {
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           final data = snapshot.data!;
-          final byStatus = (data['ordersByStatus'] as Map<String, dynamic>?) ?? {};
+          final byStatus = (data['jobsByStatus'] as Map<String, dynamic>?) ?? {};
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -28,14 +28,14 @@ class AdminDashboardScreen extends ConsumerWidget {
                 spacing: 12,
                 runSpacing: 12,
                 children: [
-                  _StatCard(label: 'Total orders', value: '${data['totalOrders'] ?? 0}'),
+                  _StatCard(label: 'Total orders', value: '${data['totalJobs'] ?? 0}'),
                   _StatCard(
                     label: 'Total revenue',
                     value: 'N\$${(((data['totalRevenueCents'] ?? 0) as num) / 100).toStringAsFixed(2)}',
                   ),
                   _StatCard(
                     label: 'Avg delivery time',
-                    value: '${((data['avgDeliveryMinutes'] ?? 0) as num).toStringAsFixed(1)} min',
+                    value: '${((data['avgCompletionMinutes'] ?? 0) as num).toStringAsFixed(1)} min',
                   ),
                 ],
               ),

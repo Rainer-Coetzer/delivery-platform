@@ -81,29 +81,29 @@ class RestaurantRepository {
   RestaurantRepository(this._api);
 
   Future<List<Restaurant>> list() async {
-    final res = await _api.dio.get('/restaurants');
+    final res = await _api.dio.get('/merchants');
     return (res.data as List).map((e) => Restaurant.fromJson(e as Map<String, dynamic>)).toList();
   }
 
   Future<List<MenuItem>> menu(String restaurantId) async {
-    final res = await _api.dio.get('/restaurants/$restaurantId/menu-items');
+    final res = await _api.dio.get('/merchants/$restaurantId/catalogue-items');
     return (res.data as List).map((e) => MenuItem.fromJson(e as Map<String, dynamic>)).toList();
   }
 
   Future<void> createMenuItem(String restaurantId, {required String name, required int priceCents, required int stockQty}) {
-    return _api.dio.post('/restaurants/$restaurantId/menu-items', data: {
+    return _api.dio.post('/merchants/$restaurantId/catalogue-items', data: {
       'name': name, 'priceCents': priceCents, 'stockQty': stockQty, 'available': true,
     });
   }
 
   Future<void> updateMenuItem(String restaurantId, MenuItem item) {
-    return _api.dio.patch('/restaurants/$restaurantId/menu-items/${item.id}', data: {
+    return _api.dio.patch('/merchants/$restaurantId/catalogue-items/${item.id}', data: {
       'name': item.name, 'priceCents': item.priceCents, 'stockQty': item.stockQty, 'available': item.available,
     });
   }
 
   Future<void> markReady(String restaurantId, String orderId) {
-    return _api.dio.post('/restaurants/$restaurantId/orders/$orderId/ready');
+    return _api.dio.post('/merchants/$restaurantId/jobs/$orderId/ready');
   }
 }
 
@@ -179,9 +179,9 @@ class OrderRepository {
     required String paymentMethod,
     required LatLng2 dropoff,
   }) async {
-    final res = await _api.dio.post('/orders/', data: {
-      'restaurantId': restaurantId,
-      'items': lines.map((l) => {'menuItemId': l.item.id, 'quantity': l.quantity}).toList(),
+    final res = await _api.dio.post('/jobs/', data: {
+      'merchantId': restaurantId,
+      'items': lines.map((l) => {'catalogueItemId': l.item.id, 'quantity': l.quantity}).toList(),
       'paymentMethod': paymentMethod,
       'dropoff': dropoff.toJson(),
     });
@@ -189,17 +189,17 @@ class OrderRepository {
   }
 
   Future<Order> get(String id) async {
-    final res = await _api.dio.get('/orders/$id');
+    final res = await _api.dio.get('/jobs/$id');
     return Order.fromJson(res.data as Map<String, dynamic>);
   }
 
   Future<List<Order>> byCustomer(String customerId) async {
-    final res = await _api.dio.get('/orders/', queryParameters: {'customerId': customerId});
+    final res = await _api.dio.get('/jobs/', queryParameters: {'customerId': customerId});
     return (res.data as List).map((e) => Order.fromJson(e as Map<String, dynamic>)).toList();
   }
 
   Future<List<Order>> byRestaurant(String restaurantId) async {
-    final res = await _api.dio.get('/orders/', queryParameters: {'restaurantId': restaurantId});
+    final res = await _api.dio.get('/jobs/', queryParameters: {'merchantId': restaurantId});
     return (res.data as List).map((e) => Order.fromJson(e as Map<String, dynamic>)).toList();
   }
 }
@@ -213,7 +213,7 @@ final restaurantOrdersProvider = FutureProvider.family<List<Order>, String>((ref
 // --- Live order tracking over WebSocket ---
 
 /// Emits every raw event envelope the gateway forwards for one order:
-/// orders.status-changed and delivery.location. The UI decodes `eventType`
+/// jobs.status-changed and dispatch.location. The UI decodes `eventType`
 /// to decide what changed.
 final orderEventsProvider = StreamProvider.family.autoDispose<Map<String, dynamic>, String>((ref, orderId) async* {
   final api = ref.watch(apiClientProvider);
@@ -232,20 +232,20 @@ class DeliveryRepository {
   DeliveryRepository(this._api);
 
   Future<List<Driver>> listDrivers() async {
-    final res = await _api.dio.get('/drivers');
+    final res = await _api.dio.get('/agents');
     return (res.data as List).map((e) => Driver.fromJson(e as Map<String, dynamic>)).toList();
   }
 
   Future<void> setStatus(String driverId, String status) {
-    return _api.dio.patch('/drivers/$driverId/status', data: {'status': status});
+    return _api.dio.patch('/agents/$driverId/status', data: {'status': status});
   }
 
   Future<void> reportLocation(String driverId, double lat, double lng) {
-    return _api.dio.patch('/drivers/$driverId/location', data: {'lat': lat, 'lng': lng});
+    return _api.dio.patch('/agents/$driverId/location', data: {'lat': lat, 'lng': lng});
   }
 
-  Future<void> pickedUp(String deliveryId) => _api.dio.post('/deliveries/$deliveryId/picked-up');
-  Future<void> completed(String deliveryId) => _api.dio.post('/deliveries/$deliveryId/completed');
+  Future<void> pickedUp(String deliveryId) => _api.dio.post('/assignments/$deliveryId/picked-up');
+  Future<void> completed(String deliveryId) => _api.dio.post('/assignments/$deliveryId/completed');
 }
 
 final deliveryRepositoryProvider = Provider((ref) => DeliveryRepository(ref.watch(apiClientProvider)));

@@ -1,5 +1,5 @@
-// Package app is the service kit (ADR-0002). A module (customer, order,
-// delivery, ...) describes itself once, as a Definition. The same
+// Package app is the service kit (ADR-0002). A module (identity, jobs,
+// dispatch, ...) describes itself once, as a Definition. The same
 // Definition then runs either:
 //
 //   - alone, as a microservice (services/<name>/cmd): its own database,
@@ -41,22 +41,19 @@ import (
 
 // Definition is how a module describes itself to Run.
 type Definition struct {
-	// Name is the module's short name ("order"). In the platform it is also
-	// the database schema, unless Schema is set.
-	Name   string
-	Schema string
+	// Name is the module's short name ("jobs"). In the platform it is also
+	// the database schema.
+	Name string
+	// FormerSchemas are names this module's schema had in earlier releases
+	// (Phase C renamed "orders" to "jobs", and so on). On boot, a former
+	// schema is renamed to Name so an upgraded install keeps its data.
+	// Keep entries for as long as an old install might still upgrade.
+	FormerSchemas []string
 	// Migrations are the module's goose .sql files at the FS root. Nil means
 	// the module has no database (the gateway).
 	Migrations fs.FS
 	// New builds the module once its database is migrated and open.
 	New func(Deps) (*Module, error)
-}
-
-func (d Definition) schema() string {
-	if d.Schema != "" {
-		return d.Schema
-	}
-	return d.Name
 }
 
 // Module is what a Definition builds.
@@ -106,10 +103,10 @@ type Options struct {
 // compose profile, where every service listens on 8080 in its own
 // container. Override with <NAME>_SERVICE_URL.
 var defaultServiceURLs = map[string]string{
-	"customer": "http://customer-service:8080", "restaurant": "http://restaurant-service:8080",
-	"order": "http://order-service:8080", "payment": "http://payment-service:8080",
-	"delivery": "http://delivery-service:8080", "notification": "http://notification-service:8080",
-	"admin": "http://admin-service:8080",
+	"identity": "http://identity-service:8080", "merchant": "http://merchant-service:8080",
+	"jobs": "http://jobs-service:8080", "payment": "http://payment-service:8080",
+	"dispatch": "http://dispatch-service:8080", "notification": "http://notification-service:8080",
+	"reporting": "http://reporting-service:8080",
 }
 
 // Run starts the modules and blocks until SIGINT/SIGTERM. Any startup error
@@ -269,12 +266,12 @@ func newBus(ctx context.Context, kind, dsn string, log *slog.Logger) (bus.Bus, e
 // the shared database inside the platform, the whole database otherwise.
 func openModuleDB(ctx context.Context, dsn string, def Definition, embedded bool) (*db.Pool, error) {
 	if embedded {
-		if err := db.MigrateSchema(ctx, dsn, def.schema(), def.Migrations); err != nil {
+		if err := db.MigrateSchema(ctx, dsn, def.Name, def.Migrations, def.FormerSchemas...); err != nil {
 			return nil, fmt.Errorf("module %s: %w", def.Name, err)
 		}
 		// 5 connections per module: 9 modules + the bus stay well under
 		// Postgres' default 100, with headroom for backups and psql.
-		return db.OpenSchema(ctx, dsn, def.schema(), 5)
+		return db.OpenSchema(ctx, dsn, def.Name, 5)
 	}
 	if err := db.Migrate(dsn, def.Migrations, "."); err != nil {
 		return nil, fmt.Errorf("module %s: %w", def.Name, err)

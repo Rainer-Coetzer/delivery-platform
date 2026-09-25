@@ -8,24 +8,24 @@ import (
 	"github.com/rainercoetzer/delivery-platform/pkg/events"
 )
 
-// Bridge forwards orders.status-changed and delivery.location events to the
-// WebSocket room named by their orderId, so a client watching one order sees
-// its status change and its driver move without any polling.
+// Bridge forwards jobs.status-changed and dispatch.location events to the
+// WebSocket room named by their jobId, so a client watching one job sees
+// its status change and its agent move without any polling.
 type Bridge struct {
 	Hub *Hub
 	Log *slog.Logger
 }
 
 func (b *Bridge) Handle(ctx context.Context, env events.Envelope) error {
-	room := env.OrderID
+	room := env.JobID
 	if room == "" {
-		// delivery.location is keyed by driverId at the Kafka level but
-		// still carries orderId in its payload; recover it there.
-		data, err := events.Decode[events.DriverLocationData](env)
-		if err != nil || data.OrderID == "" {
+		// dispatch.location is keyed by agentId at the Kafka level but
+		// still carries jobId in its payload; recover it there.
+		data, err := events.Decode[events.AgentLocationData](env)
+		if err != nil || data.JobID == "" {
 			return nil
 		}
-		room = data.OrderID
+		room = data.JobID
 	}
 	payload, err := json.Marshal(env)
 	if err != nil {

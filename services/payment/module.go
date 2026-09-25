@@ -1,4 +1,4 @@
-// Package payment is the payments module: simulated authorization on order
+// Package payment is the payments module: simulated authorization on job
 // creation and refunds on cancellation.
 package payment
 
@@ -20,7 +20,7 @@ var Definition = app.Definition{
 			Routes: (&api.API{Store: store.New(d.Pool), Log: d.Log, Auth: d.Auth}).Routes,
 			Outbox: true,
 			Consumers: []app.Consumer{{
-				Group: "payment-service", Topics: []string{events.OrderCreated, events.OrderCancelled}, Handler: h.Handle,
+				Group: "payment-service", Topics: []string{events.JobCreated, events.JobCancelled}, Handler: h.Handle,
 			}},
 		}, nil
 	},

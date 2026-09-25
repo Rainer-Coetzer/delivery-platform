@@ -33,11 +33,74 @@ func Migrate(dsn string, fsys fs.FS, dir string) error {
 // A Postgres session advisory lock (keyed by schema) makes concurrent boots
 // safe: a second replica waits for the first to finish instead of racing it
 // on the same DDL.
-func MigrateSchema(ctx context.Context, dsn, schema string, fsys fs.FS) error {
-	if !validSchema.MatchString(schema) {
-		return fmt.Errorf("MigrateSchema: schema %q must be lowercase letters, digits and _ (no quoting needed)", schema)
+//
+// formerNames are earlier names of the same schema. If one of them exists
+// and schema doesn't, it is renamed first, so an upgraded install keeps its
+// data: goose's version table lives inside the schema and moves with it.
+func MigrateSchema(ctx context.Context, dsn, schema string, fsys fs.FS, formerNames ...string) error {
+	for _, name := range append([]string{schema}, formerNames...) {
+		if !validSchema.MatchString(name) {
+			return fmt.Errorf("MigrateSchema: schema %q must be lowercase letters, digits and _ (no quoting needed)", name)
+		}
+	}
+	if err := renameFormer(ctx, dsn, schema, formerNames); err != nil {
+		return err
 	}
 	return migrate(ctx, dsn, schema, fsys)
+}
+
+// renameFormer renames the one former schema that exists to schema. It
+// refuses to guess when both the old and the new schema exist (someone ran
+// a new binary, then restored an old backup beside it): which one holds the
+// real data is a question for a person, not for boot code.
+func renameFormer(ctx context.Context, dsn, schema string, formerNames []string) error {
+	if len(formerNames) == 0 {
+		return nil
+	}
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("connect to check former schemas of %q: %w", schema, err)
+	}
+	defer conn.Close(ctx)
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin schema rename for %q: %w", schema, err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after Commit
+	// Two instances booting together must not both try the rename.
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", lockID("rename:"+schema)); err != nil {
+		return fmt.Errorf("lock schema rename for %q: %w", schema, err)
+	}
+
+	var present []string
+	if err := tx.QueryRow(ctx, `SELECT coalesce(array_agg(nspname ORDER BY nspname), '{}') FROM pg_namespace WHERE nspname = ANY($1)`,
+		append([]string{schema}, formerNames...)).Scan(&present); err != nil {
+		return fmt.Errorf("look up schemas for %q: %w", schema, err)
+	}
+	var found []string
+	current := false
+	for _, n := range present {
+		if n == schema {
+			current = true
+		} else {
+			found = append(found, n)
+		}
+	}
+	switch {
+	case len(found) == 0:
+		return nil
+	case current:
+		return fmt.Errorf("schema %q and its former name %v both exist: decide which holds the data, drop the other, then restart", schema, found)
+	case len(found) > 1:
+		return fmt.Errorf("schema %q has more than one former schema present %v: drop the stale ones, then restart", schema, found)
+	}
+	if _, err := tx.Exec(ctx, "ALTER SCHEMA "+found[0]+" RENAME TO "+schema); err != nil { // both match validSchema
+		return fmt.Errorf("rename schema %q to %q: %w", found[0], schema, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit rename of schema %q to %q: %w", found[0], schema, err)
+	}
+	return nil
 }
 
 // validSchema keeps schema names to identifiers that never need quoting.

@@ -1,5 +1,5 @@
 // Package api holds the Gateway's own handlers: login (which the reverse
-// proxy can't do, since it has to turn a customer-service response into a
+// proxy can't do, since it has to turn an identity-service response into a
 // signed JWT) and a couple of small conveniences.
 package api
 
@@ -24,7 +24,7 @@ type AuthAPI struct {
 	httpClient         *http.Client
 }
 
-// NewAuthAPI calls the customer module through client: the network between
+// NewAuthAPI calls the identity module through client: the network between
 // microservices, in-memory inside cmd/platform.
 func NewAuthAPI(customerServiceURL string, client *http.Client, issuer *auth.Issuer, log *slog.Logger) *AuthAPI {
 	return &AuthAPI{CustomerServiceURL: customerServiceURL, Issuer: issuer, Log: log, httpClient: client}
@@ -43,7 +43,7 @@ type userProfile struct {
 	RefID string `json:"refId"`
 }
 
-// Login verifies credentials against the customer service (which owns all
+// Login verifies credentials against the identity module (which owns all
 // accounts, regardless of role) and, on success, signs a JWT the client
 // attaches as a Bearer token to every subsequent request.
 func (a *AuthAPI) Login(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +86,7 @@ func (a *AuthAPI) verify(ctx context.Context, req loginRequest) (*userProfile, i
 
 	resp, err := a.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, 0, fmt.Errorf("call customer service: %w", err)
+		return nil, 0, fmt.Errorf("call identity module: %w", err)
 	}
 	defer resp.Body.Close()
 

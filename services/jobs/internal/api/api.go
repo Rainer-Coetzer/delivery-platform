@@ -1,0 +1,276 @@
+// Package api exposes the jobs module's REST endpoints.
+package api
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/rainercoetzer/delivery-platform/pkg/auth"
+	"github.com/rainercoetzer/delivery-platform/pkg/db"
+	"github.com/rainercoetzer/delivery-platform/pkg/events"
+	"github.com/rainercoetzer/delivery-platform/pkg/httpx"
+	"github.com/rainercoetzer/delivery-platform/pkg/outbox"
+	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/catalogue"
+	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/domain"
+	"github.com/rainercoetzer/delivery-platform/services/jobs/internal/store"
+)
+
+// Catalogue is the merchant lookup createJob prices from;
+// *catalogue.Client in production, a fake in tests.
+type Catalogue interface {
+	Fetch(ctx context.Context, authorization, merchantID string) (*catalogue.Merchant, map[string]domain.CatalogueItem, error)
+}
+
+type API struct {
+	Pool      *db.Pool
+	Store     *store.Store
+	Catalogue Catalogue
+	Log       *slog.Logger
+	// Auth is auth.Issuer.Middleware; injected so tests can swap it.
+	Auth func(http.Handler) http.Handler
+}
+
+func (a *API) Routes(r chi.Router) {
+	r.Route("/jobs", func(r chi.Router) {
+		r.Use(a.Auth)
+		r.With(auth.RequireRole(auth.RoleCustomer)).Post("/", a.createJob)
+		r.Get("/{id}", a.getJob)
+		r.Get("/", a.listJobs)
+	})
+}
+
+type requestedItem struct {
+	CatalogueItemID string `json:"catalogueItemId"`
+	Quantity        int    `json:"quantity"`
+	// Name and UnitPriceCents are accepted only so older clients don't get
+	// "unknown field" errors. They are ignored: prices and names come from
+	// the merchant's catalogue (audit P0-4).
+	Name           string `json:"name,omitempty"`
+	UnitPriceCents int64  `json:"unitPriceCents,omitempty"`
+}
+
+type createJobRequest struct {
+	MerchantID    string          `json:"merchantId"`
+	Items         []requestedItem `json:"items"`
+	PaymentMethod string          `json:"paymentMethod"`
+	Dropoff       events.Location `json:"dropoff"`
+
+	// Ignored, for the same compatibility reason: the customer is whoever
+	// the token says, and pickup is the merchant's own location.
+	CustomerID   string          `json:"customerId,omitempty"`
+	CustomerName string          `json:"customerName,omitempty"`
+	MerchantName string          `json:"merchantName,omitempty"`
+	Pickup       events.Location `json:"pickup,omitempty"`
+}
+
+// createJob prices the job from the merchant's catalogue, persists it
+// with its outbox row in one transaction, and returns 201. The outbox relay
+// then publishes jobs.created, and merchant and payment race to confirm
+// it (topics in pkg/events).
+func (a *API) createJob(w http.ResponseWriter, r *http.Request) {
+	caller := auth.MustFromContext(r.Context())
+	var req createJobRequest
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.BadRequest(w, "invalid request body: "+err.Error())
+		return
+	}
+	if req.MerchantID == "" || req.PaymentMethod == "" {
+		httpx.BadRequest(w, "merchantId and paymentMethod are required")
+		return
+	}
+	if !validDropoff(req.Dropoff) {
+		httpx.BadRequest(w, "dropoff must be a real coordinate (lat -90..90, lng -180..180)")
+		return
+	}
+
+	ctx := r.Context()
+	rest, offered, err := a.Catalogue.Fetch(ctx, r.Header.Get("Authorization"), req.MerchantID)
+	if errors.Is(err, catalogue.ErrMerchantNotFound) {
+		httpx.BadRequest(w, "merchant not found")
+		return
+	}
+	if err != nil {
+		a.Log.Error("fetch catalogue", "merchantId", req.MerchantID, "error", err)
+		httpx.WriteError(w, http.StatusBadGateway, "upstream_unavailable", "could not load the merchant's catalogue, try again")
+		return
+	}
+
+	lines := make([]domain.RequestedLine, 0, len(req.Items))
+	for _, it := range req.Items {
+		lines = append(lines, domain.RequestedLine{CatalogueItemID: it.CatalogueItemID, Quantity: it.Quantity})
+	}
+	items, subtotal, err := domain.PriceItems(lines, offered)
+	if err != nil {
+		httpx.BadRequest(w, err.Error())
+		return
+	}
+
+	openJobs, err := a.Store.CountOpen(ctx, req.MerchantID)
+	if err != nil {
+		a.Log.Error("count open jobs", "error", err)
+		httpx.Internal(w, "could not price job")
+		return
+	}
+	// Known debt (audit P1, Phase 4): surge uses one merchant's load and a
+	// fixed agent estimate, and the fee below is float maths. Both move to
+	// pricing.Policy.
+	const assumedFreeAgents = 5
+	surge := domain.SurgeMultiplierFor(openJobs, assumedFreeAgents)
+	const baseDeliveryFeeCents = 1000
+	deliveryFee := int64(float64(baseDeliveryFeeCents) * surge)
+	total := subtotal + deliveryFee
+
+	pickup := events.Location{Lat: rest.Lat, Lng: rest.Lng, Label: rest.Name}
+	job := &domain.Job{
+		ID:               uuid.NewString(),
+		CustomerID:       caller.UserID,
+		CustomerName:     caller.Name,
+		MerchantID:       rest.ID,
+		MerchantName:     rest.Name,
+		Status:           events.StatusCreated,
+		Items:            items,
+		SubtotalCents:    subtotal,
+		DeliveryFeeCents: deliveryFee,
+		SurgeMultiplier:  surge,
+		TotalCents:       total,
+		PaymentMethod:    req.PaymentMethod,
+		Pickup:           pickup,
+		Dropoff:          req.Dropoff,
+	}
+
+	eventItems := make([]events.JobLine, 0, len(items))
+	for _, it := range items {
+		eventItems = append(eventItems, events.JobLine{CatalogueItemID: it.CatalogueItemID, Name: it.Name, Quantity: it.Quantity, UnitPriceCents: it.UnitPriceCents})
+	}
+	env, err := events.New(events.JobCreated, job.ID, events.JobCreatedData{
+		JobID: job.ID, CustomerID: job.CustomerID, CustomerName: job.CustomerName,
+		MerchantID: job.MerchantID, MerchantName: job.MerchantName,
+		Items: eventItems, SubtotalCents: subtotal, DeliveryFeeCents: deliveryFee,
+		SurgeMultiplier: surge, TotalCents: total, PaymentMethod: req.PaymentMethod,
+		Pickup: pickup, Dropoff: req.Dropoff,
+	})
+	if err != nil {
+		httpx.Internal(w, "could not build event")
+		return
+	}
+
+	err = a.Pool.WithTx(ctx, func(tx pgx.Tx) error {
+		if err := store.Create(ctx, tx, job); err != nil {
+			return err
+		}
+		return outbox.Insert(ctx, tx, env)
+	})
+	if err != nil {
+		a.Log.Error("create job", "error", err)
+		httpx.Internal(w, "could not create job")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, job)
+}
+
+// validDropoff rejects out-of-range coordinates and the 0,0 an omitted
+// dropoff decodes to (a point in the Atlantic that would send an agent
+// nowhere useful).
+func validDropoff(l events.Location) bool {
+	if l.Lat == 0 && l.Lng == 0 {
+		return false
+	}
+	return l.Lat >= -90 && l.Lat <= 90 && l.Lng >= -180 && l.Lng <= 180
+}
+
+// CanView reports whether caller may see job o: its customer, its
+// merchant, its assigned agent, or an admin. The gateway's WebSocket
+// relies on this too: it asks GET /jobs/{id} as the user before letting
+// them watch a job live.
+func CanView(caller *auth.Claims, o *domain.Job) bool {
+	switch {
+	case caller.IsAdmin():
+		return true
+	case caller.Role == auth.RoleCustomer:
+		return caller.UserID == o.CustomerID
+	case caller.Role == auth.RoleMerchant:
+		return caller.ActsAs(auth.RoleMerchant, o.MerchantID)
+	case caller.Role == auth.RoleAgent:
+		return o.AgentID != "" && caller.ActsAs(auth.RoleAgent, o.AgentID)
+	}
+	return false
+}
+
+func (a *API) getJob(w http.ResponseWriter, r *http.Request) {
+	job, err := a.Store.Get(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.NotFound(w, "job not found")
+			return
+		}
+		a.Log.Error("get job", "error", err)
+		httpx.Internal(w, "could not load job")
+		return
+	}
+	if !CanView(auth.MustFromContext(r.Context()), job) {
+		httpx.Forbidden(w, "this isn't your job")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, job)
+}
+
+// listJobs: customers always get their own jobs (a customerId param for
+// anyone else is refused, not silently replaced), merchants only their
+// own merchantId, admins anything.
+func (a *API) listJobs(w http.ResponseWriter, r *http.Request) {
+	caller := auth.MustFromContext(r.Context())
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	customerID := r.URL.Query().Get("customerId")
+	merchantID := r.URL.Query().Get("merchantId")
+
+	if caller.Role == auth.RoleCustomer {
+		if customerID != "" && customerID != caller.UserID {
+			httpx.Forbidden(w, "you can only list your own jobs")
+			return
+		}
+		customerID, merchantID = caller.UserID, ""
+	}
+	if merchantID != "" && !caller.ActsAs(auth.RoleMerchant, merchantID) {
+		httpx.Forbidden(w, "you can only list your own merchant's jobs")
+		return
+	}
+	if customerID != "" && !caller.IsAdmin() && customerID != caller.UserID {
+		httpx.Forbidden(w, "you can only list your own jobs")
+		return
+	}
+
+	var (
+		jobs []*domain.Job
+		err  error
+	)
+	switch {
+	case customerID != "":
+		jobs, err = a.Store.ListByCustomer(r.Context(), customerID, limit)
+	case merchantID != "":
+		jobs, err = a.Store.ListByMerchant(r.Context(), merchantID, limit)
+	default:
+		httpx.BadRequest(w, "customerId or merchantId query parameter is required")
+		return
+	}
+	if err != nil {
+		a.Log.Error("list jobs", "error", err)
+		httpx.Internal(w, "could not list jobs")
+		return
+	}
+	if jobs == nil {
+		jobs = []*domain.Job{}
+	}
+	httpx.WriteJSON(w, http.StatusOK, jobs)
+}

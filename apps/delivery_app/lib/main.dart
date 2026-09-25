@@ -73,9 +73,9 @@ class DeliveryApp extends ConsumerWidget {
 
   String _homeFor(String role) {
     switch (role) {
-      case 'driver':
+      case 'agent':
         return '/driver';
-      case 'restaurant':
+      case 'merchant':
         return '/restaurant-board';
       case 'admin':
         return '/admin';

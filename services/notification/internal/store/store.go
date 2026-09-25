@@ -11,7 +11,7 @@ import (
 type Notification struct {
 	ID        string `json:"id"`
 	Recipient string `json:"recipient"`
-	OrderID   string `json:"orderId,omitempty"`
+	JobID     string `json:"jobId,omitempty"`
 	Title     string `json:"title"`
 	Body      string `json:"body"`
 	Channel   string `json:"channel"`
@@ -19,9 +19,9 @@ type Notification struct {
 
 func Insert(ctx context.Context, q db.Queryer, n *Notification) error {
 	_, err := q.Exec(ctx, `
-		INSERT INTO notifications (id, recipient, order_id, title, body, channel)
+		INSERT INTO notifications (id, recipient, job_id, title, body, channel)
 		VALUES ($1,$2,$3,$4,$5,$6)`,
-		n.ID, n.Recipient, nullStr(n.OrderID), n.Title, n.Body, n.Channel)
+		n.ID, n.Recipient, nullStr(n.JobID), n.Title, n.Body, n.Channel)
 	if err != nil {
 		return fmt.Errorf("insert notification: %w", err)
 	}
@@ -34,7 +34,7 @@ func New(pool *db.Pool) *Store { return &Store{pool: pool} }
 
 func (s *Store) ListFor(ctx context.Context, recipient string, limit int) ([]*Notification, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, recipient, coalesce(order_id,''), title, body, channel FROM notifications
+		SELECT id, recipient, coalesce(job_id,''), title, body, channel FROM notifications
 		WHERE recipient=$1 ORDER BY created_at DESC LIMIT $2`, recipient, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list notifications: %w", err)
@@ -43,7 +43,7 @@ func (s *Store) ListFor(ctx context.Context, recipient string, limit int) ([]*No
 	var out []*Notification
 	for rows.Next() {
 		n := &Notification{}
-		if err := rows.Scan(&n.ID, &n.Recipient, &n.OrderID, &n.Title, &n.Body, &n.Channel); err != nil {
+		if err := rows.Scan(&n.ID, &n.Recipient, &n.JobID, &n.Title, &n.Body, &n.Channel); err != nil {
 			return nil, fmt.Errorf("scan notification: %w", err)
 		}
 		out = append(out, n)

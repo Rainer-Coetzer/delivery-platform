@@ -65,10 +65,10 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("DuplicatesDedupedByProcessedEvents", func(t *testing.T) { deduped(t, factory(t)) })
 }
 
-// publish sends an envelope whose OrderID is key and whose EventID is id.
+// publish sends an envelope whose JobID is key and whose EventID is id.
 func publish(t *testing.T, b bus.Bus, topic, key, id string, n int) {
 	t.Helper()
-	env := events.Envelope{EventID: id, EventType: topic, OrderID: key, Timestamp: time.Now().UTC(), Data: json.RawMessage(strconv.Itoa(n))}
+	env := events.Envelope{EventID: id, EventType: topic, JobID: key, Timestamp: time.Now().UTC(), Data: json.RawMessage(strconv.Itoa(n))}
 	raw, _ := json.Marshal(env)
 	if err := b.Publish(context.Background(), topic, key, raw); err != nil {
 		t.Fatalf("publish %s/%s: %v", key, id, err)
@@ -104,7 +104,7 @@ func orderedPerKey(t *testing.T, h Harness) {
 	subscribe(t, h.Bus, "g-"+uuid.NewString(), topic, func(_ context.Context, env events.Envelope) error {
 		n, _ := strconv.Atoi(string(env.Data))
 		mu.Lock()
-		seen[env.OrderID] = append(seen[env.OrderID], n)
+		seen[env.JobID] = append(seen[env.JobID], n)
 		mu.Unlock()
 		return nil
 	})
@@ -267,7 +267,7 @@ func deduped(t *testing.T, h Harness) {
 	id := uuid.NewString()
 	publish(t, h.Bus, topic, "job-dup", id, 1)
 	publish(t, h.Bus, topic, "job-dup", id, 1)
-	eventually(t, "both deliveries handled", func() bool { mu.Lock(); defer mu.Unlock(); return handled >= 2 })
+	eventually(t, "both assignments handled", func() bool { mu.Lock(); defer mu.Unlock(); return handled >= 2 })
 	var n int
 	if err := h.Pool.QueryRow(context.Background(), `SELECT count(*) FROM effects WHERE event_id = $1`, id).Scan(&n); err != nil {
 		t.Fatal(err)

@@ -15,7 +15,7 @@ var ErrNotFound = errors.New("payment not found")
 
 type Payment struct {
 	ID             string `json:"id"`
-	OrderID        string `json:"orderId"`
+	JobID          string `json:"jobId"`
 	IdempotencyKey string `json:"-"`
 	CustomerID     string `json:"customerId"`
 	AmountCents    int64  `json:"amountCents"`
@@ -33,14 +33,14 @@ func New(pool *db.Pool) *Store { return &Store{pool: pool} }
 // This is the guard against charging the same order twice.
 func InsertIfAbsent(ctx context.Context, tx pgx.Tx, p *Payment) (existed bool, err error) {
 	_, err = tx.Exec(ctx, `
-		INSERT INTO payments (id, order_id, idempotency_key, customer_id, amount_cents, method, status, failure_reason)
+		INSERT INTO payments (id, job_id, idempotency_key, customer_id, amount_cents, method, status, failure_reason)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		ON CONFLICT (idempotency_key) DO NOTHING`,
-		p.ID, p.OrderID, p.IdempotencyKey, p.CustomerID, p.AmountCents, p.Method, p.Status, nullStr(p.FailureReason))
+		p.ID, p.JobID, p.IdempotencyKey, p.CustomerID, p.AmountCents, p.Method, p.Status, nullStr(p.FailureReason))
 	if err != nil {
 		return false, fmt.Errorf("insert payment: %w", err)
 	}
-	existing, err := GetByOrderForUpdate(ctx, tx, p.OrderID)
+	existing, err := GetByJobForUpdate(ctx, tx, p.JobID)
 	if err != nil {
 		return false, err
 	}
@@ -51,23 +51,23 @@ func InsertIfAbsent(ctx context.Context, tx pgx.Tx, p *Payment) (existed bool, e
 	return false, nil
 }
 
-func GetByOrderForUpdate(ctx context.Context, tx pgx.Tx, orderID string) (*Payment, error) {
+func GetByJobForUpdate(ctx context.Context, tx pgx.Tx, jobID string) (*Payment, error) {
 	row := tx.QueryRow(ctx, `
-		SELECT id, order_id, idempotency_key, customer_id, amount_cents, method, status, coalesce(failure_reason,'')
-		FROM payments WHERE order_id=$1 FOR UPDATE`, orderID)
+		SELECT id, job_id, idempotency_key, customer_id, amount_cents, method, status, coalesce(failure_reason,'')
+		FROM payments WHERE job_id=$1 FOR UPDATE`, jobID)
 	return scan(row)
 }
 
-func (s *Store) GetByOrder(ctx context.Context, orderID string) (*Payment, error) {
+func (s *Store) GetByJob(ctx context.Context, jobID string) (*Payment, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT id, order_id, idempotency_key, customer_id, amount_cents, method, status, coalesce(failure_reason,'')
-		FROM payments WHERE order_id=$1`, orderID)
+		SELECT id, job_id, idempotency_key, customer_id, amount_cents, method, status, coalesce(failure_reason,'')
+		FROM payments WHERE job_id=$1`, jobID)
 	return scan(row)
 }
 
 func scan(row interface{ Scan(dest ...any) error }) (*Payment, error) {
 	p := &Payment{}
-	err := row.Scan(&p.ID, &p.OrderID, &p.IdempotencyKey, &p.CustomerID, &p.AmountCents, &p.Method, &p.Status, &p.FailureReason)
+	err := row.Scan(&p.ID, &p.JobID, &p.IdempotencyKey, &p.CustomerID, &p.AmountCents, &p.Method, &p.Status, &p.FailureReason)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -85,9 +85,9 @@ func MarkRefunded(ctx context.Context, tx pgx.Tx, paymentID string) error {
 	return nil
 }
 
-func InsertRefund(ctx context.Context, tx pgx.Tx, id, paymentID, orderID string, amountCents int64) error {
-	_, err := tx.Exec(ctx, `INSERT INTO refunds (id, payment_id, order_id, amount_cents) VALUES ($1,$2,$3,$4)`,
-		id, paymentID, orderID, amountCents)
+func InsertRefund(ctx context.Context, tx pgx.Tx, id, paymentID, jobID string, amountCents int64) error {
+	_, err := tx.Exec(ctx, `INSERT INTO refunds (id, payment_id, job_id, amount_cents) VALUES ($1,$2,$3,$4)`,
+		id, paymentID, jobID, amountCents)
 	if err != nil {
 		return fmt.Errorf("insert refund: %w", err)
 	}

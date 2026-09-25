@@ -1,6 +1,6 @@
 #!/bin/sh
 # End-to-end check: starts the stack with the demo autopilot on, seeds it,
-# places one order through the gateway and waits for DELIVERED.
+# places one job through the gateway and waits for DELIVERED.
 #
 #   ./scripts/e2e.sh                     # lite profile: build + start + seed + run
 #   E2E_PROFILE=full ./scripts/e2e.sh    # the microservice shape instead

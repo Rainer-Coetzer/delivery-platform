@@ -31,16 +31,16 @@ func newModule(d app.Deps) (*app.Module, error) {
 	}
 	d.Log.Info("security config", "profile", config.Profile(), "allowedOrigins", origins)
 
-	authAPI := api.NewAuthAPI(d.URL("customer"), d.HTTP, d.Issuer, d.Log)
+	authAPI := api.NewAuthAPI(d.URL("identity"), d.HTTP, d.Issuer, d.Log)
 	hub := ws.NewHub(d.Log)
 	hub.OriginPatterns = originHosts(origins)
-	hub.Authorize = ws.NewOrderAccess(d.URL("order"), d.HTTP, d.Issuer).Authorize
+	hub.Authorize = ws.NewJobAccess(d.URL("jobs"), d.HTTP, d.Issuer).Authorize
 	bridge := &ws.Bridge{Hub: hub, Log: d.Log}
 
 	routes := func(r chi.Router) {
 		r.Post("/auth/login", authAPI.Login)
-		// Live updates: /ws?orderId=<id>&token=<jwt>. The hub verifies the
-		// token and asks the order module whether this user may see it.
+		// Live updates: /ws?jobId=<id>&token=<jwt>. The hub verifies the
+		// token and asks the jobs module whether this user may see it.
 		r.Get("/ws", hub.ServeHTTP)
 		if d.Embedded {
 			return // the other modules are mounted on this same router
@@ -48,7 +48,7 @@ func newModule(d app.Deps) (*app.Module, error) {
 		// Between microservices: registration goes straight through, and
 		// every other prefix is proxied after an early token check. Each
 		// service verifies the token again (docs/adr/0001).
-		register, err := proxy.New(d.URL("customer"))
+		register, err := proxy.New(d.URL("identity"))
 		must(err)
 		r.Post("/auth/register", register.ServeHTTP)
 		r.Group(func(r chi.Router) {
@@ -75,7 +75,7 @@ func newModule(d app.Deps) (*app.Module, error) {
 		Edge:   edge,
 		Consumers: []app.Consumer{{
 			Group:   "gateway-ws",
-			Topics:  []string{events.OrderStatusChanged, events.DeliveryLocation, events.OrderCancelled},
+			Topics:  []string{events.JobStatusChanged, events.DispatchLocation, events.JobCancelled},
 			Handler: bridge.Handle,
 		}},
 	}, nil
@@ -101,10 +101,10 @@ func blockInternal(next http.Handler) http.Handler {
 
 // proxiedPrefixes: which module owns each public path prefix.
 var proxiedPrefixes = map[string]string{
-	"/customers": "customer", "/users": "customer",
-	"/restaurants": "restaurant", "/orders": "order", "/payments": "payment",
-	"/deliveries": "delivery", "/drivers": "delivery",
-	"/notifications": "notification", "/admin": "admin",
+	"/customers": "identity", "/users": "identity",
+	"/merchants": "merchant", "/jobs": "jobs", "/payments": "payment",
+	"/assignments": "dispatch", "/agents": "dispatch",
+	"/notifications": "notification", "/admin": "reporting",
 }
 
 // originHosts converts ALLOWED_ORIGINS entries (full origins like
