@@ -1,0 +1,40 @@
+# Why each food word outside packs/food/ is there. Checked by
+# tools/termcheck (go test ./tools/termcheck, and CI with the rest).
+# <path glob>|<text on the line, empty for the whole file>|<why>
+
+# History that must keep its old names
+services/*/internal/migrations/*.sql||shipped migrations are append-only; the early ones create the food-named tables that later ones rename
+cmd/platform/upgrade_integration_test.go||seeds the pre-rename, food-named schemas to prove an upgrade keeps the data
+services/*/module.go|FormerSchemas|the schema's pre-rename name, so an upgrade finds it
+infra/postgres/initdb/*.sql|Renamed in Phase C|records the rename for anyone with an older install
+
+# Other packs' own vocabulary (a pack is where words belong)
+packs/*/*||each pack's terminology and demo data; freight's agents are drivers
+
+# The food pack named as the pack it is: the default, and examples in comments
+*|PACK|food is the default pack
+*|(food|naming the food pack as the example
+*|food's|naming the food pack as the example
+*|food:|naming the food pack as the example
+*|for food|naming the food pack as the example
+*|in food|naming the food pack as the example
+*|food pack|naming the food pack as the example
+*|food,|a list of the shipped packs
+*|food delivery, a courier|a list of the shipped packs
+*|a food or courier job|naming the food pack as the example
+*|food app|naming the food pack as the example
+*|food customer|naming the food pack as the example
+*|A food|naming the food pack as the example
+*|food isn't|naming the food pack as the example
+*|food has none|naming the food pack as the example
+
+# Tests that run the food pack by name
+*_test.go|food|runs the food pack as its fixture
+*_test.go|kitchen|describes the food pack's lifecycle it tests
+*_test.go|"restaurant"|asserts the food pack's own words
+*_test.go|"driver"|asserts the food pack's own words
+
+# Words that aren't ours
+pkg/db/migrate.go|database/sql driver|Go's term for a database driver
+services/dispatch/internal/api/proof.go|drivers_licence|a kind of ID document
+*|DropdownMenuItem|Flutter's widget name
