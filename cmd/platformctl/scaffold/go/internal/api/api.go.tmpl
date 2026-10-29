@@ -23,7 +23,7 @@ type API struct {
 	Auth func(http.Handler) http.Handler
 }
 
-// Routes declares who may call each route (project conventions: every route states
+// Routes declares who may call each route (docs/CONVENTIONS.md: every route states
 // its roles, and api_test.go has a row for it).
 func (a *API) Routes(r chi.Router) {
 	r.Route("/ext/[[.Name]]", func(r chi.Router) {

@@ -8,7 +8,7 @@ import (
 
 // Settings are the numbers a pack's capability modules run on: limits,
 // lead times, attempts, sizes. They live in pack.yaml, never in code, so a
-// buyer changes a limit by editing their pack (project conventions: no hardcoded
+// buyer changes a limit by editing their pack (docs/CONVENTIONS.md: no hardcoded
 // business constants). A module that needs settings refuses to boot
 // without them rather than falling back to a number nobody chose.
 type Settings struct {

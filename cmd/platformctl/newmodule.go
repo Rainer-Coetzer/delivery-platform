@@ -16,7 +16,7 @@ import (
 )
 
 // The scaffold's files, as templates. Each is the smallest thing that
-// shows the project's conventions (project conventions): a pure domain package with
+// shows the project's conventions (docs/CONVENTIONS.md): a pure domain package with
 // a table test, an append-only migration, a store, routes that declare
 // their roles and take identity from the token, and a route-role test.
 //

@@ -125,7 +125,6 @@ func main() {
 6. **Flutter:** restructure feature-first, profile-driven theme/currency/map, finish the driver and restaurant flows, restore the session, reconnect the WebSocket.
 7. **Hardening and observability:** readiness checks, timeouts, body limits, the outbox lag metric, OTel tracing into the Jaeger that's already deployed, and a DLQ replay tool.
 
-
 ---
 
 ## Phase 0 re-validation (24 September 2026)

@@ -3,13 +3,11 @@
 What proves each phase is done, and the **release gate**: the bar every
 version of the product must clear before it's sold.
 
-The phases are defined in the product brief
-(A–F), with the design in [ADR-0002](adr/0002-modular-monolith.md) and
-[ADR-0003](adr/0003-generic-logistics-model.md). Phases 1–2 of the earlier
-improvement plan are done; their record
-is in [AUDIT.md](AUDIT.md). A phase counts as done only when its tests exist
-and pass, and the run has been reported honestly. If a layer couldn't run,
-the phase summary says so.
+The design is in [ADR-0002](adr/0002-modular-monolith.md) and
+[ADR-0003](adr/0003-generic-logistics-model.md). The first two hardening
+phases are recorded in [AUDIT.md](AUDIT.md). A phase counts as done only
+when its tests exist and pass, and the run has been reported honestly. If a
+layer couldn't run, the phase summary says so.
 
 ## Layers
 
@@ -25,7 +23,7 @@ the phase summary says so.
 
 **Rules**
 
-- Domain tests are table-driven (a project convention). Every strategy and every
+- Domain tests are table-driven (see [CONVENTIONS.md](CONVENTIONS.md)). Every strategy and every
   lifecycle rule ships with a table, including the invalid cases.
 - Every route has a row in its service's route-role matrix. Every rejection
   must be decided before any store call (the tests run with nil stores, so a
