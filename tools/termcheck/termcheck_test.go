@@ -24,7 +24,7 @@ var foodWords = regexp.MustCompile(`(?i)restaurant|menu|food|driver|kitchen|dish
 // What gets checked: source and config, not generated or vendored trees.
 var checked = map[string]bool{".go": true, ".dart": true, ".sh": true, ".sql": true, ".yml": true, ".yaml": true, ".json": true}
 
-var skipDirs = map[string]bool{".git": true, "build": true, ".dart_tool": true, "node_modules": true, "web": true, "docs": true,
+var skipDirs = map[string]bool{"build": true, ".dart_tool": true, "node_modules": true, "web": true, "docs": true,
 	"android": true, "ios": true, "linux": true, "macos": true, "windows": true}
 
 type rule struct{ glob, needle, why string }
@@ -40,7 +40,7 @@ func TestNoFoodWordsOutsideTheFoodPack(t *testing.T) {
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if skipDirs[d.Name()] || rel == "packs/food" {
+			if skipDirs[d.Name()] || hidden(rel) || rel == "packs/food" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -85,7 +85,7 @@ func TestAllowlistHasNoDeadRules(t *testing.T) {
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if skipDirs[d.Name()] || rel == "packs/food" {
+			if skipDirs[d.Name()] || hidden(rel) || rel == "packs/food" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -159,4 +159,12 @@ func (r rule) matches(rel, line string) bool {
 		ok = ok && !strings.Contains(r.glob, "/")
 	}
 	return ok && strings.Contains(strings.ToLower(line), r.needle)
+}
+
+// Hidden directories (.git, editor and agent state, local worktrees) are
+// tool state, and a stale checkout inside one would fail the whole check.
+// .github is the exception: CI config is ours.
+func hidden(rel string) bool {
+	base := path.Base(rel)
+	return rel != "." && base != ".github" && strings.HasPrefix(base, ".")
 }
