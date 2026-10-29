@@ -5,7 +5,7 @@
 > dispatch, admin -> reporting; order -> job, driver -> agent, delivery ->
 > assignment, menu item -> catalogue item. The rewrite lands at the end of Phase C.
 
-A food delivery platform: Go microservices,
+Go modules (one binary or microservices),
 Kafka, PostgreSQL/PostGIS, a Flutter client, all in Docker Compose. See
 [../README.md](../README.md) for how to run it, [AUDIT.md](AUDIT.md) for
 known gaps and the improvement plan, and [TESTING.md](TESTING.md) for how

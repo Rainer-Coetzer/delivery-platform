@@ -1,8 +1,11 @@
 # Delivery Platform
 
-A distributed food delivery platform built with **Go** microservices, **Kafka**, **PostgreSQL + PostGIS**, and a
-**Flutter** client for web, Android and iOS. See
+A white-label logistics platform for delivery businesses: **Go** modules
+that run as one binary or as microservices, **Kafka** or an in-process bus,
+**PostgreSQL + PostGIS**, and a **Flutter** client for web, Android and iOS.
+Food, courier and freight ship as vertical packs. See
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
+Before changing code, read [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
 
 ## Services
 

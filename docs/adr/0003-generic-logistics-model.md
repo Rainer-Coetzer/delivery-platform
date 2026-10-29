@@ -2,7 +2,7 @@
 
 **Status:** Accepted (amended 2026-09-25: one leg per job, see the end)
 **Date:** 2026-09-24
-**Deciders:** Rainer Coetzer
+**Deciders:** Maintainers
 
 ## Context
 

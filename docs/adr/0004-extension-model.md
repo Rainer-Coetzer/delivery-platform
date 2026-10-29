@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-09-25
-**Deciders:** Rainer Coetzer
+**Deciders:** Maintainers
 
 ## Context
 
